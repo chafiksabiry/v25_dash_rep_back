@@ -1,0 +1,190 @@
+const axios = require('axios');
+require('dotenv').config();
+
+const repProfileApiBaseUrl = process.env.REP_PROFILE_API || 'https://api-repcreationwizard.harx.ai/api';
+
+// Create an axios instance for the external API
+const externalApiClient = axios.create({
+  baseURL: repProfileApiBaseUrl,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add request interceptor to add JWT token
+externalApiClient.interceptors.request.use(
+  (config) => {
+    // For service-to-service communication, we might use a service API key
+    // or forward the user's JWT token
+    if (config.headers && config.data && config.data.token) {
+      config.headers.Authorization = `Bearer ${config.data.token}`;
+      // Remove token from the payload
+      delete config.data.token;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+class ExternalProfileService {
+  /**
+   * Get profile data from the external profile creation service
+   */
+  async getProfileFromExternalService(userId, token) {
+    try {
+      // Use the correct endpoint: /api/profiles/:id
+      const response = await externalApiClient.get(`/profiles/${userId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching profile from external service:', error);
+      throw new Error('Failed to fetch profile from external service');
+    }
+  }
+
+  /**
+   * Update profile in the external service
+   */
+  async updateProfileInExternalService(userId, profileData, token) {
+    try {
+      // Use the correct endpoint: /api/profiles/:id
+      const response = await externalApiClient.put(`/profiles/${userId}`, profileData, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error updating profile in external service:', error);
+      throw new Error('Failed to update profile in external service');
+    }
+  }
+
+  /**
+   * Map the external profile data to a format suitable for the dashboard
+   * The dashboard needs a simplified version of the profile
+   */
+  mapExternalProfileToViewFormat(externalProfile) {
+    // Handle possible null/undefined values
+    if (!externalProfile) {
+      return null;
+    }
+
+    const personalInfo = externalProfile.personalInfo || {};
+    const professionalSummary = externalProfile.professionalSummary || {};
+    const skills = externalProfile.skills || { technical: [], professional: [], soft: [] };
+    const achievements = externalProfile.achievements || [];
+    const experience = externalProfile.experience || [];
+    const assessments = externalProfile.assessments || { contactCenter: [] };
+    
+    // Extract languages with their proficiency levels
+    const languages = personalInfo.languages?.map(lang => ({
+      language: lang.language,
+      proficiency: lang.proficiency,
+      assessmentScore: lang.assessmentResults?.overall?.score || 0
+    })) || [];
+
+    // Flatten skills into a single array for easier display
+    const allSkills = [
+      ...skills.technical.map(s => ({ name: s.skill, level: s.level, type: 'technical' })),
+      ...skills.professional.map(s => ({ name: s.skill, level: s.level, type: 'professional' })),
+      ...skills.soft.map(s => ({ name: s.skill, level: s.level, type: 'soft' }))
+    ];
+
+    // Calculate average assessment scores
+    const contactCenterScores = assessments.contactCenter?.map(a => a.score) || [];
+    const avgAssessmentScore = contactCenterScores.length > 0 
+      ? contactCenterScores.reduce((sum, score) => sum + score, 0) / contactCenterScores.length 
+      : 0;
+
+    // Map achievements to required format for dashboard
+    const formattedAchievements = achievements.map(a => ({
+      title: a.description.substring(0, 30), // Use first part as title
+      description: a.description,
+      // Mock progress for demonstration
+      progress: Math.floor(Math.random() * 80) + 20, // Random progress between 20-100
+      total: 100
+    }));
+
+    // Calculate REPS scores based on assessment data
+    const repsScores = this.calculateREPSScores(assessments.contactCenter);
+
+    return {
+      userId: externalProfile.userId,
+      firstName: personalInfo.name?.split(' ')[0] || '',
+      lastName: personalInfo.name?.split(' ').slice(1).join(' ') || '',
+      email: personalInfo.email || '',
+      phone: personalInfo.phone || '',
+      location: personalInfo.location || '',
+      role: professionalSummary.currentRole || 'HARX Representative',
+      experience: parseInt(professionalSummary.yearsOfExperience) || 0,
+      rating: avgAssessmentScore / 20, // Convert 0-100 scale to 0-5 scale
+      totalReviews: contactCenterScores.length,
+      skills: allSkills.map(s => s.name),
+      points: Math.floor(Math.random() * 5000) + 1000, // Mock points for demonstration
+      achievements: formattedAchievements.slice(0, 3), // Take top 3 achievements
+      languages,
+      performance: {
+        customerSatisfaction: repsScores.service,
+        taskCompletionRate: repsScores.efficiency,
+        onTimeDelivery: repsScores.reliability
+      },
+      completionStatus: externalProfile.status,
+      completionSteps: externalProfile.completionSteps,
+      lastUpdated: externalProfile.lastUpdated
+    };
+  }
+
+  /**
+   * Calculate REPS scores based on assessment data
+   */
+  calculateREPSScores(contactCenterAssessments) {
+    // Default scores if no assessments
+    if (!contactCenterAssessments || contactCenterAssessments.length === 0) {
+      return {
+        reliability: 85,
+        efficiency: 80,
+        professionalism: 90,
+        service: 85
+      };
+    }
+
+    // Extract metrics from assessments
+    let professionalism = 0;
+    let effectiveness = 0;
+    let customerFocus = 0;
+    let count = 0;
+
+    // Aggregate assessment metrics
+    contactCenterAssessments.forEach(assessment => {
+      if (assessment.keyMetrics) {
+        professionalism += assessment.keyMetrics.professionalism || 0;
+        effectiveness += assessment.keyMetrics.effectiveness || 0;
+        customerFocus += assessment.keyMetrics.customerFocus || 0;
+        count++;
+      }
+    });
+
+    // Calculate averages and convert to 0-100 scale
+    if (count > 0) {
+      professionalism = (professionalism / count) * 10;
+      effectiveness = (effectiveness / count) * 10;
+      customerFocus = (customerFocus / count) * 10;
+    }
+
+    // Map to REPS categories
+    return {
+      reliability: Math.round(professionalism * 0.7 + effectiveness * 0.3),
+      efficiency: Math.round(effectiveness * 0.8 + customerFocus * 0.2),
+      professionalism: Math.round(professionalism),
+      service: Math.round(customerFocus * 0.8 + professionalism * 0.2)
+    };
+  }
+}
+
+module.exports = ExternalProfileService; 
