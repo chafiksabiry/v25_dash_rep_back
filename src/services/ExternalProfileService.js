@@ -1,5 +1,6 @@
 const axios = require('axios');
 require('dotenv').config();
+const logger = require('../utils/logger');
 
 const repProfileApiBaseUrl = process.env.REP_PROFILE_API || 'https://api-repcreationwizard.harx.ai/api';
 
@@ -34,15 +35,18 @@ class ExternalProfileService {
    */
   async getProfileFromExternalService(userId, token) {
     try {
+      logger.info(`Fetching profile from external service for user: ${userId}`);
+      
       // Use the correct endpoint: /api/profiles/:id
       const response = await externalApiClient.get(`/profiles/${userId}`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
       });
+      logger.debug(`External API response received for user ${userId}`);
       return response.data;
     } catch (error) {
-      console.error('Error fetching profile from external service:', error);
+      logger.error(`Error fetching profile from external service for user ${userId}: ${error.message}`, { error });
       throw new Error('Failed to fetch profile from external service');
     }
   }

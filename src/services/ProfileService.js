@@ -1,4 +1,5 @@
 const ExternalProfileService = require('./ExternalProfileService');
+const logger = require('../utils/logger');
 
 class ProfileService {
   constructor() {
@@ -10,13 +11,15 @@ class ProfileService {
    */
   async getProfile(userId, token) {
     try {
+      logger.info(`Getting profile for user: ${userId}`);
+      
       // Get profile from external service
       const externalProfile = await this.externalProfileService.getProfileFromExternalService(userId, token);
       
       // Transform to dashboard format
       return this.externalProfileService.mapExternalProfileToViewFormat(externalProfile);
     } catch (error) {
-      console.error('Error getting profile:', error);
+      logger.error(`Error getting profile for user ${userId}: ${error.message}`, { error });
       throw error;
     }
   }
@@ -26,6 +29,8 @@ class ProfileService {
    */
   async updateProfile(userId, profileData, token) {
     try {
+      logger.info(`Updating profile for user: ${userId}`);
+      
       // Update in the external service
       const updatedExternalProfile = await this.externalProfileService.updateProfileInExternalService(
         userId, 
@@ -36,7 +41,7 @@ class ProfileService {
       // Transform and return the updated profile
       return this.externalProfileService.mapExternalProfileToViewFormat(updatedExternalProfile);
     } catch (error) {
-      console.error('Error updating profile:', error);
+      logger.error(`Error updating profile for user ${userId}: ${error.message}`, { error });
       throw error;
     }
   }

@@ -1,4 +1,5 @@
 const ProfileService = require('../services/ProfileService');
+const logger = require('../utils/logger');
 
 class ProfileController {
   constructor() {
@@ -7,8 +8,9 @@ class ProfileController {
 
   async getProfile(req, res) {
     try {
-      const userId = req.user?.id; // Assuming user ID is added by auth middleware
+      const userId = req.user?.id;
       if (!userId) {
+        logger.warn('Unauthorized access attempt - missing user ID');
         res.status(401).json({ message: 'Unauthorized' });
         return;
       }
@@ -18,19 +20,24 @@ class ProfileController {
       const token = authHeader?.split(' ')[1];
       
       if (!token) {
+        logger.warn(`No token provided for user ${userId}`);
         res.status(401).json({ message: 'No token provided' });
         return;
       }
 
+      logger.info(`Retrieving profile for user: ${userId}`);
       const profile = await this.profileService.getProfile(userId, token);
+      
       if (!profile) {
+        logger.warn(`Profile not found for user ${userId}`);
         res.status(404).json({ message: 'Profile not found' });
         return;
       }
 
+      logger.info(`Successfully retrieved profile for user ${userId}`);
       res.json(profile);
     } catch (error) {
-      console.error('Error in getProfile controller:', error);
+      logger.error(`Error in getProfile controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Internal server error' });
     }
   }
