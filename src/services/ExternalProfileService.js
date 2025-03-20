@@ -78,8 +78,6 @@ class ExternalProfileService {
     const personalInfo = externalProfile.personalInfo || {};
     const professionalSummary = externalProfile.professionalSummary || {};
     const skills = externalProfile.skills || { technical: [], professional: [], soft: [] };
-    const achievements = externalProfile.achievements || [];
-    const experience = externalProfile.experience || [];
     const assessments = externalProfile.assessments || { contactCenter: [] };
     
     // Extract languages with their proficiency levels
@@ -96,25 +94,30 @@ class ExternalProfileService {
       ...skills.soft.map(s => ({ name: s.skill, level: s.level, type: 'soft' }))
     ];
 
-    // Calculate average assessment scores
-    const contactCenterScores = assessments.contactCenter?.map(a => a.score) || [];
-    const avgAssessmentScore = contactCenterScores.length > 0 
-      ? contactCenterScores.reduce((sum, score) => sum + score, 0) / contactCenterScores.length 
-      : 0;
+    // Group assessments by category
+    const assessmentsByCategory = {};
+    if (assessments.contactCenter && assessments.contactCenter.length > 0) {
+      assessments.contactCenter.forEach(assessment => {
+        if (!assessmentsByCategory[assessment.category]) {
+          assessmentsByCategory[assessment.category] = [];
+        }
+        assessmentsByCategory[assessment.category].push(assessment);
+      });
+    }
 
-    // Map achievements to required format for dashboard
-    const formattedAchievements = achievements.map(a => ({
-      title: a.description.substring(0, 30), // Use first part as title
-      description: a.description,
-      // Mock progress for demonstration
-      progress: Math.floor(Math.random() * 80) + 20, // Random progress between 20-100
-      total: 100
-    }));
-
-    // Calculate REPS scores based on assessment data
-    const repsScores = this.calculateREPSScores(assessments.contactCenter);
+    // Calculate average score for each category
+    const categoryKPIs = {};
+    Object.keys(assessmentsByCategory).forEach(category => {
+      const categoryAssessments = assessmentsByCategory[category];
+      const totalScore = categoryAssessments.reduce((sum, assessment) => sum + assessment.score, 0);
+      categoryKPIs[category] = totalScore / categoryAssessments.length;
+    });
 
     return {
+      // Keep the document ID
+      _id: externalProfile._id,
+      
+      // Basic profile information
       userId: externalProfile.userId,
       firstName: personalInfo.name?.split(' ')[0] || '',
       lastName: personalInfo.name?.split(' ').slice(1).join(' ') || '',
@@ -123,17 +126,23 @@ class ExternalProfileService {
       location: personalInfo.location || '',
       role: professionalSummary.currentRole || 'HARX Representative',
       experience: parseInt(professionalSummary.yearsOfExperience) || 0,
-      rating: avgAssessmentScore / 20, // Convert 0-100 scale to 0-5 scale
-      totalReviews: contactCenterScores.length,
+      
+      // Professional summary details
+      industries: professionalSummary.industries || [],
+      keyExpertise: professionalSummary.keyExpertise || [],
+      notableCompanies: professionalSummary.notableCompanies || [],
+      
+      // Keep full experience data
+      experienceDetails: externalProfile.experience || [],
+      
+      // Skills data
       skills: allSkills.map(s => s.name),
-      points: Math.floor(Math.random() * 5000) + 1000, // Mock points for demonstration
-      achievements: formattedAchievements.slice(0, 3), // Take top 3 achievements
       languages,
-      performance: {
-        customerSatisfaction: repsScores.service,
-        taskCompletionRate: repsScores.efficiency,
-        onTimeDelivery: repsScores.reliability
-      },
+      
+      // Assessment data
+      assessmentKPIs: categoryKPIs,
+      
+      // Status information
       completionStatus: externalProfile.status,
       completionSteps: externalProfile.completionSteps,
       lastUpdated: externalProfile.lastUpdated
