@@ -29,6 +29,9 @@ router.get('/user/:id', profileController.getProfileById.bind(profileController)
 // Update profile
 router.put('/', profileController.updateProfile.bind(profileController));
 
+// Update profile by ID
+router.put('/:id', profileController.updateProfile.bind(profileController));
+
 // Get REPS score
 router.get('/reps-score', profileController.getREPSScore.bind(profileController));
 

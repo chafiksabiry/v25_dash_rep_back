@@ -1,5 +1,6 @@
 const ExternalProfileService = require('./ExternalProfileService');
 const logger = require('../utils/logger');
+const axios = require('axios');
 
 class ProfileService {
   constructor() {
@@ -27,21 +28,23 @@ class ProfileService {
   /**
    * Update profile in the external service
    */
-  async updateProfile(userId, profileData, token) {
+  async updateProfile(profileId, profileData, token) {
     try {
-      logger.info(`Updating profile for user: ${userId}`);
-      
-      // Update in the external service
-      const updatedExternalProfile = await this.externalProfileService.updateProfileInExternalService(
-        userId, 
-        profileData, 
-        token
+      // Call the external API with the profile ID
+      const response = await axios.put(
+        `${process.env.REP_PROFILE_API}/profiles/${profileId}`,
+        profileData,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          }
+        }
       );
       
-      // Transform and return the updated profile
-      return this.externalProfileService.mapExternalProfileToViewFormat(updatedExternalProfile);
+      return response.data;
     } catch (error) {
-      logger.error(`Error updating profile for user ${userId}: ${error.message}`, { error });
+      console.error('Error updating profile in external service:', error.response?.data || error.message);
       throw error;
     }
   }

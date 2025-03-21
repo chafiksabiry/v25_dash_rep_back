@@ -75,9 +75,11 @@ class ProfileController {
 
   async updateProfile(req, res) {
     try {
-      const userId = req.user?.id;
-      if (!userId) {
-        res.status(401).json({ message: 'Unauthorized' });
+      const profileId = req.params.id;
+      const profileData = req.body;
+      
+      if (!profileId) {
+        res.status(400).json({ message: 'Profile ID is required' });
         return;
       }
 
@@ -90,8 +92,10 @@ class ProfileController {
         return;
       }
 
-      const profileData = req.body;
-      const updatedProfile = await this.profileService.updateProfile(userId, profileData, token);
+      // Log the update operation
+      console.log(`Updating profile with ID: ${profileId}`);
+      
+      const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
       
       if (!updatedProfile) {
         res.status(404).json({ message: 'Profile not found' });
