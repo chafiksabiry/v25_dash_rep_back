@@ -10,9 +10,9 @@ const profileController = new ProfileController();
 router.get('/generate-test-token/:userId', (req, res) => {
   const userId = req.params.userId;
   const token = jwt.sign(
-    { id: userId, email: `${userId}@example.com` }, 
-    process.env.JWT_SECRET || 'your-secret-key', 
-    { expiresIn: '1h' }
+    { userId: userId }, 
+    process.env.JWT_SECRET || 'my_super_secret_key_12345'
+   /*  { expiresIn: '1h' } */
   );
   res.json({ token });
 });
