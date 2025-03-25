@@ -12,7 +12,11 @@ dotenv.config();
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: "*",  // Allow all origins temporarily (not recommended for production)
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],  // Allowed HTTP methods
+  allowedHeaders: "*"// Allowed request headers
+}));
 app.use(express.json());
 
 // Add request logging middleware (should be one of the first middlewares)
