@@ -30,10 +30,32 @@ class ProfileService {
    */
   async updateProfile(profileId, profileData, token) {
     try {
-      // Call the external API with the profile ID
+      // Create a new object to hold all the flattened fields
+      const flattenedData = {};
+      
+      // Recursively flatten nested fields using dot notation
+      const flattenObject = (obj, prefix = '') => {
+        for (const key in obj) {
+          if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+            // Recursively flatten nested objects
+            flattenObject(obj[key], `${prefix}${key}.`);
+          } else {
+            // Add the field with its path
+            flattenedData[`${prefix}${key}`] = obj[key];
+          }
+        }
+      };
+      
+      // Apply the flattening
+      flattenObject(profileData);
+      
+      // Debug the flattened data structure
+      console.log('Flattened profile data:', flattenedData);
+      
+      // Call the external API with the profile ID and flattened data
       const response = await axios.put(
         `${process.env.REP_PROFILE_API}/profiles/${profileId}`,
-        profileData,
+        flattenedData,
         {
           headers: {
             'Content-Type': 'application/json',
