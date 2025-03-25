@@ -56,8 +56,30 @@ class ExternalProfileService {
    */
   async updateProfileInExternalService(userId, profileData, token) {
     try {
-      // Use the correct endpoint: /api/profiles/:id
-      const response = await externalApiClient.put(`/profiles/${userId}`, profileData, {
+      // Create a new object to hold all the flattened fields
+      const flattenedData = {};
+      
+      // Recursively flatten nested fields using dot notation
+      const flattenObject = (obj, prefix = '') => {
+        for (const key in obj) {
+          if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
+            // Recursively flatten nested objects
+            flattenObject(obj[key], `${prefix}${key}.`);
+          } else {
+            // Add the field with its path
+            flattenedData[`${prefix}${key}`] = obj[key];
+          }
+        }
+      };
+      
+      // Apply the flattening
+      flattenObject(profileData);
+      
+      // Debug the flattened data structure
+      console.log('Flattened profile data for external service:', flattenedData);
+      
+      // Use the correct endpoint: /api/profiles/:id with flattened data
+      const response = await externalApiClient.put(`/profiles/${userId}`, flattenedData, {
         headers: {
           Authorization: `Bearer ${token}`
         }
