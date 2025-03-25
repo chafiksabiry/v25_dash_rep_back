@@ -145,8 +145,9 @@ class ExternalProfileService {
       
       // Basic profile information
       userId: externalProfile.userId,
-      firstName: personalInfo.name?.split(' ')[0] || '',
-      lastName: personalInfo.name?.split(' ').slice(1).join(' ') || '',
+      name: personalInfo.name || '',
+/*       firstName: personalInfo.name?.split(' ')[0] || '',
+      lastName: personalInfo.name?.split(' ').slice(1).join(' ') || '', */
       email: personalInfo.email || '',
       phone: personalInfo.phone || '',
       location: personalInfo.location || '',
