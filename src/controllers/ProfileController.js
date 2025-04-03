@@ -59,6 +59,7 @@ class ProfileController {
         res.status(401).json({ message: 'No token provided' });
         return;
       }
+      logger.info(`token from getProfileById controller: ${token}`);
 
       const profile = await this.profileService.getProfile(userId, token);
       if (!profile) {
