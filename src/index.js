@@ -23,7 +23,7 @@ app.use(express.json());
 app.use(requestLogger);
 
 // Routes
-app.use('/api/profile', profileRoutes);
+app.use('/api/profiles', profileRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
