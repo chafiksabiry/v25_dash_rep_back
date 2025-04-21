@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 const profileRoutes = require('./routes/profileRoutes');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler = require('./middleware/errorHandler');
@@ -24,6 +25,18 @@ const corsOptions = {
   optionsSuccessStatus: 200
 };
 app.use(cors(corsOptions));
+
+// ✅ Set CORS headers for static file requests too
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://v25-preprod.harx.ai');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  next();
+});
+
+// 🔥 Serve static files from dist
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // Parse incoming JSON
 app.use(express.json());
