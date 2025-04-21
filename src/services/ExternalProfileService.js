@@ -133,10 +133,26 @@ class ExternalProfileService {
 
     // Calculate average score for each category
     const categoryKPIs = {};
+    const skillKPIs = {};
+
     Object.keys(assessmentsByCategory).forEach(category => {
       const categoryAssessments = assessmentsByCategory[category];
       const totalScore = categoryAssessments.reduce((sum, assessment) => sum + assessment.score, 0);
       categoryKPIs[category] = totalScore / categoryAssessments.length;
+      
+      // Store complete skill assessment data under each category
+      skillKPIs[category] = categoryAssessments.map(assessment => ({
+        category: assessment.category,
+        skill: assessment.skill,
+        score: assessment.score,
+        keyMetrics: assessment.keyMetrics || {},
+        strengths: assessment.strengths || [],
+        improvements: assessment.improvements || [],
+        feedback: assessment.feedback || '',
+        tips: assessment.tips || [],
+        completedAt: assessment.completedAt,
+        _id: assessment._id
+      }));
     });
 
     return {
@@ -167,7 +183,10 @@ class ExternalProfileService {
       languages,
       
       // Assessment data
-      assessmentKPIs: categoryKPIs,
+      assessmentKPIs: {
+        categoryScores: categoryKPIs,  // Overall category scores
+        skillAssessments: skillKPIs    // Complete skill assessment data by category
+      },
       
       // Status information
       completionStatus: externalProfile.status,

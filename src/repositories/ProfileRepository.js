@@ -7,6 +7,8 @@ class ProfileRepository {
 
   async create(profileData) {
     const profile = new Profile(profileData);
+    // Update completion status before saving
+    profile.updateCompletionStatus();
     return profile.save();
   }
 
@@ -15,23 +17,38 @@ class ProfileRepository {
     const updateData = {};
     
     // Process the data to use dot notation for nested properties
-    for (const key in profileData) {
-      if (typeof profileData[key] === 'object' && profileData[key] !== null && !Array.isArray(profileData[key])) {
-        // For nested objects, create entries with dot notation
-        for (const nestedKey in profileData[key]) {
-          updateData[`${key}.${nestedKey}`] = profileData[key][nestedKey];
+    const flattenObject = (obj, prefix = '') => {
+      for (const key in obj) {
+        if (typeof obj[key] === 'object' && obj[key] !== null) {
+          if (Array.isArray(obj[key])) {
+            // Handle arrays directly
+            updateData[`${prefix}${key}`] = obj[key];
+          } else {
+            // Recursively flatten nested objects
+            flattenObject(obj[key], `${prefix}${key}.`);
+          }
+        } else {
+          // For simple fields, add them directly
+          updateData[`${prefix}${key}`] = obj[key];
         }
-      } else {
-        // For simple fields or arrays, add them directly
-        updateData[key] = profileData[key];
       }
-    }
+    };
     
-    return Profile.findOneAndUpdate(
+    flattenObject(profileData);
+    
+    const profile = await Profile.findOneAndUpdate(
       { userId },
       { $set: updateData },
       { new: true, runValidators: true }
     );
+
+    if (profile) {
+      // Update completion status after update
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
   }
 
   async delete(userId) {
@@ -39,34 +56,94 @@ class ProfileRepository {
     return result.deletedCount > 0;
   }
 
+  async updateLanguages(userId, languages) {
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { $set: { 'personalInfo.languages': languages } },
+      { new: true }
+    );
+
+    if (profile) {
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
+  }
+
+  async updateSkills(userId, skillType, skills) {
+    const updateField = `skills.${skillType}`;
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { $set: { [updateField]: skills } },
+      { new: true }
+    );
+
+    if (profile) {
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
+  }
+
+  async updateExperience(userId, experience) {
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { $set: { experience } },
+      { new: true }
+    );
+
+    if (profile) {
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
+  }
+
   async updateAchievements(userId, achievements) {
-    // If achievements is an array, set it directly
-    return Profile.findOneAndUpdate(
+    const profile = await Profile.findOneAndUpdate(
       { userId },
       { $set: { achievements } },
       { new: true }
     );
+
+    if (profile) {
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
   }
 
-  async updatePerformance(userId, performance) {
-    // Create update object with dot notation for nested performance fields
-    const updateData = {};
-    
-    for (const key in performance) {
-      updateData[`performance.${key}`] = performance[key];
-    }
-    
+  async updateAvailability(userId, availability) {
     return Profile.findOneAndUpdate(
       { userId },
-      { $set: updateData },
+      { $set: { availability } },
       { new: true }
     );
   }
 
-  async updatePoints(userId, points) {
+  async updatePersonalInfo(userId, personalInfo) {
+    const profile = await Profile.findOneAndUpdate(
+      { userId },
+      { $set: { personalInfo } },
+      { new: true }
+    );
+
+    if (profile) {
+      profile.updateCompletionStatus();
+      await profile.save();
+    }
+
+    return profile;
+  }
+
+  async updateProfessionalSummary(userId, professionalSummary) {
     return Profile.findOneAndUpdate(
       { userId },
-      { $set: { points } },
+      { $set: { professionalSummary } },
       { new: true }
     );
   }

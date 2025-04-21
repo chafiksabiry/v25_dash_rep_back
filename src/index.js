@@ -13,9 +13,10 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: "*",  // Allow all origins temporarily (not recommended for production)
+  origin: "https://v25-preprod.harx.ai",  // Allow all origins temporarily (not recommended for production)
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],  // Allowed HTTP methods
-  allowedHeaders: "*"// Allowed request headers
+  allowedHeaders: "*",// Allowed request headers,
+  credentials: true,  // Allows credentials (cookies, authorization headers) to be included in cross-origin requests
 }));
 app.use(express.json());
 
@@ -23,7 +24,7 @@ app.use(express.json());
 app.use(requestLogger);
 
 // Routes
-app.use('/api/profile', profileRoutes);
+app.use('/api/profiles', profileRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
