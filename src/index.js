@@ -11,25 +11,19 @@ dotenv.config();
 
 const app = express();
 
-// ✅ CORS middleware (must be first!)
-app.use(cors({
-  origin: "https://v25-preprod.harx.ai",
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+// Set up trust proxy for secure handling of headers
+app.set('trust proxy', true); 
+
+const corsOptions = {
+  origin: [
+    'https://v25-preprod.harx.ai'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'], 
   credentials: true,
-}));
-
-// ✅ Force CORS headers also on static files
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "https://v25-preprod.harx.ai");
-  res.header("Access-Control-Allow-Methods", "GET, OPTIONS, POST, PUT, DELETE");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  res.header("Access-Control-Allow-Credentials", "true");
-  next();
-});
-
-// ✅ Serve static frontend build
-app.use(express.static(path.join(__dirname, "dist")));
+  optionsSuccessStatus: 200
+};
+app.use(cors(corsOptions));
 
 // Parse incoming JSON
 app.use(express.json());
