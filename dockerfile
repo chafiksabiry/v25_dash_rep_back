@@ -15,7 +15,7 @@ COPY . .
 
 # Set environment variables
 ENV PORT=5008
-ENV JWT_SECRET=my_super_secret_key_12345
+ENV JWT_SECRET=your_jwt_secret_key_here
 ENV REP_PROFILE_API=https://preprod-api-repcreationwizard.harx.ai/api 
 
 # Expose port
