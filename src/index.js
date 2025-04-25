@@ -16,9 +16,7 @@ const app = express();
 app.set('trust proxy', true); 
 
 const corsOptions = {
-  origin: [
-    'https://v25-preprod.harx.ai'
-  ],
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'], 
   credentials: true,
@@ -27,8 +25,8 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // ✅ Set CORS headers for static file requests too
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://v25-preprod.harx.ai');
+/* app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -36,7 +34,7 @@ app.use((req, res, next) => {
 });
 
 // 🔥 Serve static files from dist
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, 'dist'))); */
 
 // Parse incoming JSON
 app.use(express.json());
