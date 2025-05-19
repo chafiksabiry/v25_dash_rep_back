@@ -16,7 +16,7 @@ const app = express();
 app.set('trust proxy', true); 
 
 const corsOptions = {
-  origin: '*',
+  origin: [process.env.FRONT_URL, process.env.QIANKUN_MAIN_APP_URL],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'], 
   credentials: true,

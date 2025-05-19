@@ -154,6 +154,142 @@ class ProfileService {
       throw error;
     }
   }
+
+  /**
+   * Add or update language assessment
+   */
+  async addLanguageAssessment(profileId, assessmentData, token) {
+    try {
+      // Get the current profile
+      const profile = await this.getProfile(profileId, token);
+      
+      if (!profile) {
+        throw new Error('Profile not found');
+      }
+
+      // Check if the profile has languages
+      if (!profile.personalInfo || !profile.personalInfo.languages) {
+        throw new Error('Profile does not have languages defined');
+      }
+
+      // Find the language to update
+      const languageName = assessmentData.language;
+      const languages = profile.personalInfo.languages;
+      const languageIndex = languages.findIndex(l => l.language.toLowerCase() === languageName.toLowerCase());
+
+      if (languageIndex === -1) {
+        throw new Error(`Language ${languageName} not found in profile`);
+      }
+
+      // Create updated language with assessment results
+      const updatedLanguage = {
+        ...languages[languageIndex],
+        assessmentResults: assessmentData.results,
+      };
+
+      // Update the languages array
+      const updatedLanguages = [...languages];
+      updatedLanguages[languageIndex] = updatedLanguage;
+
+      // Create profile data with just the languages field
+      const profileData = {
+        personalInfo: {
+          languages: updatedLanguages
+        }
+      };
+
+      // Update the profile
+      return await this.updateProfile(profileId, profileData, token);
+    } catch (error) {
+      logger.error('Error adding language assessment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Add or update contact center assessment
+   */
+  async addContactCenterAssessment(profileId, assessment, token) {
+    try {
+      // Get the current profile
+      const profile = await this.getProfile(profileId, token);
+      
+      if (!profile) {
+        throw new Error('Profile not found');
+      }
+
+      // Initialize contact center skills if not present
+      if (!profile.skills) {
+        profile.skills = {};
+      }
+      
+      if (!profile.skills.contactCenter) {
+        profile.skills.contactCenter = [];
+      }
+
+      // Find the skill to update
+      const skillName = assessment.skill;
+      const contactCenterSkills = profile.skills.contactCenter;
+      const skillIndex = contactCenterSkills.findIndex(s => s.skill.toLowerCase() === skillName.toLowerCase());
+
+      // Create updated skill data
+      const skillData = {
+        skill: skillName,
+        category: assessment.category || 'General',
+        proficiency: assessment.proficiency || 'Intermediate',
+        assessmentResults: assessment.results
+      };
+
+      let updatedSkills;
+      if (skillIndex === -1) {
+        // Add new skill
+        updatedSkills = [...contactCenterSkills, skillData];
+      } else {
+        // Update existing skill
+        updatedSkills = [...contactCenterSkills];
+        updatedSkills[skillIndex] = skillData;
+      }
+
+      // Create profile data with just the updated contact center skills
+      const profileData = {
+        skills: {
+          contactCenter: updatedSkills
+        }
+      };
+
+      // Update the profile
+      return await this.updateProfile(profileId, profileData, token);
+    } catch (error) {
+      logger.error('Error adding contact center assessment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if a profile exists for a user
+   */
+  async checkProfileExists(userId, token) {
+    try {
+      logger.info(`Checking if profile exists for user: ${userId}`);
+      
+      try {
+        // Try to get the profile
+        const profile = await this.getProfile(userId, token);
+        // If profile is returned, it exists
+        return !!profile;
+      } catch (error) {
+        // If error code is 404, profile doesn't exist
+        if (error.response && error.response.status === 404) {
+          return false;
+        }
+        // For other errors, re-throw
+        throw error;
+      }
+    } catch (error) {
+      logger.error(`Error checking if profile exists for user ${userId}:`, error);
+      return false;
+    }
+  }
 }
 
 module.exports = ProfileService; 
