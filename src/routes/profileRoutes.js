@@ -32,6 +32,24 @@ router.put('/', profileController.updateProfile.bind(profileController));
 // Update profile by ID
 router.put('/:id', profileController.updateProfile.bind(profileController));
 
+// Update basic info
+router.put('/:id/basic-info', profileController.updateBasicInfo.bind(profileController));
+
+// Update experience
+router.put('/:id/experience', profileController.updateExperience.bind(profileController));
+
+// Update skills
+router.put('/:id/skills', profileController.updateSkills.bind(profileController));
+
+// Add language assessment
+router.post('/:id/language-assessment', profileController.addLanguageAssessment.bind(profileController));
+
+// Add contact center assessment
+router.post('/:id/contact-center-assessment', profileController.addContactCenterAssessment.bind(profileController));
+
+// Check if profile exists
+router.get('/:id/exists', profileController.checkProfileExists.bind(profileController));
+
 // Get REPS score
 router.get('/reps-score', profileController.getREPSScore.bind(profileController));
 
