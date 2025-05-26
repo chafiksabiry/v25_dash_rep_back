@@ -427,6 +427,36 @@ class ProfileController {
       res.json({ exists: false });
     }
   }
+
+  async getPlan(req, res) {
+    try {
+      const profileId = req.params.id;
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+      
+      if (!token) {
+        return res.status(401).json({ message: 'No token provided' });
+      }
+
+      logger.info(`Retrieving subscription plan for profile: ${profileId}`);
+      const plan = await this.profileService.getPlan(profileId, token);
+      
+      if (!plan) {
+        logger.warn(`Plan not found for profile ${profileId}`);
+        return res.status(404).json({ message: 'Plan not found' });
+      }
+
+      res.json(plan);
+    } catch (error) {
+      logger.error(`Error in getPlan controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
 }
 
 module.exports = ProfileController; 

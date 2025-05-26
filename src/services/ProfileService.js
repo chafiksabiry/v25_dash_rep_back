@@ -290,6 +290,34 @@ class ProfileService {
       return false;
     }
   }
+
+  /**
+   * Get subscription plan for a profile
+   */
+  async getPlan(profileId, token) {
+    try {
+      logger.info(`Getting subscription plan for profile: ${profileId}`);
+      
+      const response = await axios.get(
+        `${process.env.REP_PROFILE_API}/profiles/${profileId}/plan`,
+        {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        }
+      );
+
+      if (!response.data) {
+        logger.warn(`No plan found for profile ${profileId}`);
+        return null;
+      }
+
+      return response.data;
+    } catch (error) {
+      logger.error(`Error getting plan for profile ${profileId}: ${error.message}`, { error });
+      throw error;
+    }
+  }
 }
 
 module.exports = ProfileService; 
