@@ -56,4 +56,7 @@ router.get('/reps-score', profileController.getREPSScore.bind(profileController)
 // Get profile completion status
 router.get('/completion-status', profileController.getCompletionStatus.bind(profileController));
 
+// Get user's subscription plan
+router.get('/:id/plan', profileController.getPlan.bind(profileController));
+
 module.exports = router; 
