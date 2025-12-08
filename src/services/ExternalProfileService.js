@@ -2,7 +2,7 @@ const axios = require('axios');
 require('dotenv').config();
 const logger = require('../utils/logger');
 
-const repProfileApiBaseUrl = process.env.REP_PROFILE_API || 'https://api-repcreationwizard.harx.ai/api';
+const repProfileApiBaseUrl = process.env.REP_PROFILE_API || 'https://prod-api-repcreationwizard.harx.ai/api';
 
 // Create an axios instance for the external API
 const externalApiClient = axios.create({
