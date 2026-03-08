@@ -38,11 +38,12 @@ class ExternalProfileService {
       logger.info(`Fetching profile from external service for user: ${userId}`);
 
       // Use the correct endpoint: /api/profiles/:id
-      const response = await externalApiClient.get(`/profiles/${userId}`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const headers = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const response = await externalApiClient.get(`/profiles/${userId}`, { headers });
       logger.debug(`External API response received for user ${userId}`);
       return response.data;
     } catch (error) {
@@ -79,11 +80,12 @@ class ExternalProfileService {
       console.log('Flattened profile data for external service:', flattenedData);
 
       // Use the correct endpoint: /api/profiles/:id with flattened data
-      const response = await externalApiClient.put(`/profiles/${userId}`, flattenedData, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const headers = {};
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const response = await externalApiClient.put(`/profiles/${userId}`, flattenedData, { headers });
       return response.data;
     } catch (error) {
       console.error('Error updating profile in external service:', error);

@@ -17,15 +17,14 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        logger.warn(`No token provided for user ${userId}`);
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn(`No token provided for user ${userId} - some external features may be limited`);
       }
 
       logger.info(`Retrieving profile for user: ${userId}`);
       const profile = await this.profileService.getProfile(userId, token);
-      
+
       if (!profile) {
         logger.warn(`Profile not found for user ${userId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -49,16 +48,16 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Retrieving profile by ID: ${userId}`);
       logger.info(`Retrieving token in getProfileById controller: ${token}`);
 
       const profile = await this.profileService.getProfile(userId, token);
-      
+
       if (!profile) {
         logger.warn(`Profile not found for ID ${userId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -75,7 +74,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const profileData = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -83,17 +82,17 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Validate required fields based on update type
       if (profileData.personalInfo) {
         const { name, email } = profileData.personalInfo;
         if (!name || !email) {
-          return res.status(400).json({ 
-            message: 'Name and email are required in personal info' 
+          return res.status(400).json({
+            message: 'Name and email are required in personal info'
           });
         }
       }
@@ -101,8 +100,8 @@ class ProfileController {
       if (profileData.experience) {
         for (const exp of profileData.experience) {
           if (!exp.title || !exp.company || !exp.startDate) {
-            return res.status(400).json({ 
-              message: 'Title, company, and start date are required for experience' 
+            return res.status(400).json({
+              message: 'Title, company, and start date are required for experience'
             });
           }
         }
@@ -114,8 +113,8 @@ class ProfileController {
           if (profileData.skills[type]) {
             for (const skill of profileData.skills[type]) {
               if (!skill.skill || !skill.level) {
-                return res.status(400).json({ 
-                  message: `Skill name and level are required for ${type} skills` 
+                return res.status(400).json({
+                  message: `Skill name and level are required for ${type} skills`
                 });
               }
             }
@@ -125,7 +124,7 @@ class ProfileController {
 
       logger.info(`Updating profile: ${profileId}`);
       const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for update: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -148,9 +147,9 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Calculating REPS score for user: ${userId}`);
@@ -172,9 +171,9 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Getting completion status for user: ${userId}`);
@@ -190,7 +189,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const basicInfo = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -198,25 +197,25 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Basic validation for personal info
       if (basicInfo.name === '' || basicInfo.email === '') {
-        return res.status(400).json({ 
-          message: 'Name and email cannot be empty' 
+        return res.status(400).json({
+          message: 'Name and email cannot be empty'
         });
       }
 
       logger.info(`Updating basic info for profile: ${profileId}`);
-      
+
       // Create a profile data object with just the personal info
       const profileData = { personalInfo: basicInfo };
-      
+
       const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for basic info update: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -233,7 +232,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const { experience } = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -241,17 +240,17 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Validate experience entries
       if (Array.isArray(experience)) {
         for (const exp of experience) {
           if (!exp.title || !exp.company || !exp.startDate) {
-            return res.status(400).json({ 
-              message: 'Title, company, and start date are required for each experience entry' 
+            return res.status(400).json({
+              message: 'Title, company, and start date are required for each experience entry'
             });
           }
         }
@@ -260,12 +259,12 @@ class ProfileController {
       }
 
       logger.info(`Updating experience for profile: ${profileId}`);
-      
+
       // Create a profile data object with just the experience field
       const profileData = { experience };
-      
+
       const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for experience update: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -282,7 +281,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const { skills } = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -290,9 +289,9 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Simple validation
@@ -301,12 +300,12 @@ class ProfileController {
       }
 
       logger.info(`Updating skills for profile: ${profileId}`);
-      
+
       // Create a profile data object with just the skills field
       const profileData = { skills };
-      
+
       const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for skills update: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -323,7 +322,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const assessmentData = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -331,23 +330,23 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Validate assessment data
       if (!assessmentData.language || !assessmentData.results) {
-        return res.status(400).json({ 
-          message: 'Language and assessment results are required' 
+        return res.status(400).json({
+          message: 'Language and assessment results are required'
         });
       }
 
       logger.info(`Adding language assessment for profile: ${profileId}`);
-      
+
       // Update the profile with the language assessment
       const updatedProfile = await this.profileService.addLanguageAssessment(profileId, assessmentData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for language assessment: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -364,7 +363,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const { assessment } = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -372,23 +371,23 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Validate assessment data
       if (!assessment || !assessment.skill || !assessment.results) {
-        return res.status(400).json({ 
-          message: 'Assessment must include skill and results' 
+        return res.status(400).json({
+          message: 'Assessment must include skill and results'
         });
       }
 
       logger.info(`Adding contact center assessment for profile: ${profileId}`);
-      
+
       // Update the profile with the contact center assessment
       const updatedProfile = await this.profileService.addContactCenterAssessment(profileId, assessment, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for contact center assessment: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -404,7 +403,7 @@ class ProfileController {
   async checkProfileExists(req, res) {
     try {
       const userId = req.params.id || req.user?.id;
-      
+
       if (!userId) {
         return res.status(400).json({ message: 'User ID is required' });
       }
@@ -412,14 +411,14 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Checking if profile exists for user: ${userId}`);
       const exists = await this.profileService.checkProfileExists(userId, token);
-      
+
       res.json({ exists });
     } catch (error) {
       logger.error(`Error in checkProfileExists controller: ${error.message}`, { error });
@@ -438,14 +437,14 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Retrieving subscription plan for profile: ${profileId}`);
       const plan = await this.profileService.getPlan(profileId, token);
-      
+
       if (!plan) {
         logger.warn(`Plan not found for profile ${profileId}`);
         return res.status(404).json({ message: 'Plan not found' });
