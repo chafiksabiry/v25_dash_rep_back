@@ -1,10 +1,12 @@
 const ProfileService = require('../services/ProfileService');
 const VideoAnalysisService = require('../services/VideoAnalysisService');
+const ProfileRepository = require('../repositories/ProfileRepository');
 const logger = require('../utils/logger');
 
 class ProfileController {
   constructor() {
     this.profileService = new ProfileService();
+    this.profileRepository = new ProfileRepository();
     this._videoAnalysisService = null;
   }
 
@@ -477,44 +479,37 @@ class ProfileController {
         company: req.body.company || '',
       };
 
-      const parseList = (raw) => {
-        if (!raw) return [];
-        try {
-          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          if (!Array.isArray(parsed)) return [];
-          return parsed
-            .map((item) => (typeof item === 'string' ? item : item?.name))
-            .filter((name) => typeof name === 'string' && name.trim())
-            .map((name) => name.trim());
-        } catch (e) {
-          logger.warn(`Could not parse allowed vocabulary list: ${e.message}`);
-          return [];
-        }
-      };
-
-      const vocab = {
-        technicalSkills: parseList(req.body.allowedTechnicalSkills),
-        professionalSkills: parseList(req.body.allowedProfessionalSkills),
-        softSkills: parseList(req.body.allowedSoftSkills),
-        industries: parseList(req.body.allowedIndustries),
-        activities: parseList(req.body.allowedActivities),
-      };
-
-      logger.info(
-        `Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}" ` +
-          `(vocab: tech=${vocab.technicalSkills.length}, prof=${vocab.professionalSkills.length}, ` +
-          `soft=${vocab.softSkills.length}, ind=${vocab.industries.length}, act=${vocab.activities.length})`
-      );
+      logger.info(`Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"`);
 
       const result = await this.videoAnalysisService.analyzeExperienceVideo(
         req.file.buffer,
         req.file.mimetype,
-        experienceContext,
-        vocab
+        experienceContext
       );
 
       logger.info(`Video analysis complete for profile: ${req.params.id}`);
-      res.json({ data: result });
+
+      // Persist the video + analysis onto the experience entry (best-effort).
+      let saved = false;
+      try {
+        const experienceIndex =
+          req.body.experienceIndex !== undefined ? parseInt(req.body.experienceIndex, 10) : NaN;
+        saved = await this.profileRepository.saveExperienceVideoAnalysis(
+          req.params.id,
+          experienceIndex,
+          result,
+          experienceContext
+        );
+        if (saved) {
+          logger.info(`Saved video analysis to profile ${req.params.id} (experience #${experienceIndex})`);
+        } else {
+          logger.warn(`Could not match experience to persist video analysis for profile ${req.params.id}`);
+        }
+      } catch (persistError) {
+        logger.error(`Failed to persist video analysis for profile ${req.params.id}: ${persistError.message}`);
+      }
+
+      res.json({ data: { ...result, saved } });
     } catch (error) {
       logger.error(`Error in analyzeExperienceVideo controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Video analysis failed', error: error.message });

@@ -125,7 +125,12 @@ const experienceSchema = new mongoose.Schema({
     }
   },
   responsibilities: [{ type: String }],
-  achievements: [{ type: String }]
+  achievements: [{ type: String }],
+  // AI experience video analysis (recorded from the dashboard)
+  videoUrl: { type: String },
+  videoTranscription: { type: String },
+  videoAnalysis: { type: mongoose.Schema.Types.Mixed },
+  videoAnalyzedAt: { type: Date }
 });
 
 const contactCenterSkillSchema = new mongoose.Schema({

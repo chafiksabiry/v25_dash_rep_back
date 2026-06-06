@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
+const mongoose = require('mongoose');
 const profileRoutes = require('./routes/profileRoutes');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler = require('./middleware/errorHandler');
@@ -9,6 +10,18 @@ const logger = require('./utils/logger');
 
 // Load environment variables
 dotenv.config();
+
+// Connect to MongoDB (shared HARX database) for reading reference collections
+// (skills, industries, activities). Non-fatal: the server still starts if the
+// connection fails so existing HTTP-based features keep working.
+if (process.env.MONGO_URI) {
+  mongoose
+    .connect(process.env.MONGO_URI)
+    .then(() => logger.info('Connected to MongoDB'))
+    .catch((err) => logger.error(`MongoDB connection failed: ${err.message}`));
+} else {
+  logger.warn('MONGO_URI not set — reference collections (skills/industries/activities) will be unavailable');
+}
 
 const app = express();
 

@@ -3,6 +3,7 @@ const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const VocabularyService = require('./VocabularyService');
 
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
@@ -69,6 +70,7 @@ Scoring rules:
 class VideoAnalysisService {
   constructor() {
     this._initialized = false;
+    this.vocabularyService = new VocabularyService();
   }
 
   _ensureInitialized() {
@@ -166,7 +168,7 @@ class VideoAnalysisService {
     return JSON.parse(response.choices[0].message.content);
   }
 
-  async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}, vocab = {}) {
+  async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}) {
     this._ensureInitialized();
 
     if (videoBuffer.length > MAX_VIDEO_BYTES) {
@@ -175,13 +177,20 @@ class VideoAnalysisService {
       );
     }
 
-    const safeVocab = {
-      technicalSkills: vocab.technicalSkills || [],
-      professionalSkills: vocab.professionalSkills || [],
-      softSkills: vocab.softSkills || [],
-      industries: vocab.industries || [],
-      activities: vocab.activities || [],
-    };
+    // Load the allowed vocabularies directly from the shared MongoDB collections.
+    let safeVocab;
+    try {
+      safeVocab = await this.vocabularyService.getVocabulary();
+    } catch (err) {
+      console.error('Failed to load vocabulary from DB:', err.message);
+      safeVocab = {
+        technicalSkills: [],
+        professionalSkills: [],
+        softSkills: [],
+        industries: [],
+        activities: [],
+      };
+    }
 
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);

@@ -1,8 +1,54 @@
+const mongoose = require('mongoose');
 const Profile = require('../models/Profile');
 
 class ProfileRepository {
   async findByUserId(userId) {
     return Profile.findOne({ userId });
+  }
+
+  /**
+   * Persist the AI video analysis onto a single experience entry.
+   * The profile is matched by _id (falling back to userId), and the
+   * experience entry by array index (falling back to title/company match).
+   * Returns true if a document was modified.
+   */
+  async saveExperienceVideoAnalysis(profileId, experienceIndex, payload, context = {}) {
+    const fields = {
+      videoUrl: payload.videoUrl || null,
+      videoTranscription: payload.transcription || '',
+      videoAnalysis: payload.analysis || {},
+      videoAnalyzedAt: new Date(),
+    };
+
+    // Build the profile filter (_id when valid, otherwise userId).
+    const filter = mongoose.isValidObjectId(profileId)
+      ? { _id: profileId }
+      : { userId: profileId };
+
+    const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
+
+    if (Number.isInteger(idx) && idx >= 0) {
+      const set = {};
+      Object.entries(fields).forEach(([k, v]) => {
+        set[`experience.${idx}.${k}`] = v;
+      });
+      const res = await Profile.updateOne(filter, { $set: set });
+      if (res.matchedCount > 0) return res.modifiedCount > 0 || res.matchedCount > 0;
+    }
+
+    // Fallback: match the experience entry by title (+ company) using arrayFilters.
+    if (context.title) {
+      const set = {};
+      Object.entries(fields).forEach(([k, v]) => {
+        set[`experience.$[e].${k}`] = v;
+      });
+      const arrayFilter = { 'e.title': context.title };
+      if (context.company) arrayFilter['e.company'] = context.company;
+      const res = await Profile.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
+      return res.matchedCount > 0;
+    }
+
+    return false;
   }
 
   async create(profileData) {
