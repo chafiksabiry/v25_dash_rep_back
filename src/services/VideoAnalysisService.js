@@ -1,21 +1,20 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const OpenAI = require('openai');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Gemini inline video limit (~20 MB); experience clips are capped at 2 min.
-const MAX_INLINE_VIDEO_BYTES = 15 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
-const ANALYSIS_PROMPT = (contextStr) => `You are an expert HR analyst and skills assessor. ${contextStr}
+const ANALYSIS_PROMPT = (contextStr, transcription) => `You are an expert HR analyst and skills assessor. ${contextStr}
 
-Analyze this video where a professional describes their work experience.
+Analyze the following video transcript from a professional experience description and extract structured data.
 
-Extract and score ALL of the following from what the person says and how they say it:
+TRANSCRIPT:
+"${transcription || '[No speech detected — infer from context if provided]'}"
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
-  "transcription": "full verbatim transcription of what was said",
   "technicalSkills": [
     { "name": "string", "score": 0-100, "evidence": "brief quote or reason" }
   ],
@@ -45,10 +44,10 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 
 Scoring rules:
 - Score 0 = not detected / not applicable
-- Score 100 = expert-level, strongly evidenced  
+- Score 100 = expert-level, strongly evidenced
 - Clear mention with detail → 70+
 - Vague mention → 30-60
-- For spokenLanguages: detect ALL languages actually spoken in the video
+- For spokenLanguages: detect ALL languages actually spoken
 - For contactCenterSkills: infer transferable scores even for non-contact-center roles
 - Return pure JSON only, nothing else`;
 
@@ -60,13 +59,12 @@ class VideoAnalysisService {
   _ensureInitialized() {
     if (this._initialized) return;
 
-    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('GOOGLE_API_KEY or GEMINI_API_KEY environment variable is not set');
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (!openaiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is not set');
     }
 
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    this.openai = new OpenAI({ apiKey: openaiKey });
 
     this.cloudinaryEnabled = Boolean(
       process.env.CLOUDINARY_CLOUD_NAME &&
@@ -110,12 +108,45 @@ class VideoAnalysisService {
     });
   }
 
+  async transcribeAudio(filePath) {
+    const response = await this.openai.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: 'whisper-1',
+      response_format: 'text',
+    });
+    return typeof response === 'string' ? response.trim() : String(response).trim();
+  }
+
+  async analyzeTranscript(transcription, experienceContext) {
+    const contextStr = experienceContext.title
+      ? `The person is describing their experience as "${experienceContext.title}" at "${experienceContext.company || 'a company'}".`
+      : 'The person is describing their professional experience.';
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a JSON-only API. Return only valid JSON, no markdown code blocks, no explanations.',
+        },
+        {
+          role: 'user',
+          content: ANALYSIS_PROMPT(contextStr, transcription),
+        },
+      ],
+      temperature: 0.3,
+      response_format: { type: 'json_object' },
+    });
+
+    return JSON.parse(response.choices[0].message.content);
+  }
+
   async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}) {
     this._ensureInitialized();
 
-    if (videoBuffer.length > MAX_INLINE_VIDEO_BYTES) {
+    if (videoBuffer.length > MAX_VIDEO_BYTES) {
       throw new Error(
-        `Video is too large for analysis (${Math.round(videoBuffer.length / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_INLINE_VIDEO_BYTES / 1024 / 1024)}MB.`
+        `Video is too large for analysis (${Math.round(videoBuffer.length / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)}MB.`
       );
     }
 
@@ -125,31 +156,18 @@ class VideoAnalysisService {
     try {
       fs.writeFileSync(tmpPath, videoBuffer);
 
-      const contextStr = experienceContext.title
-        ? `The person is describing their experience as "${experienceContext.title}" at "${experienceContext.company || 'a company'}".`
-        : 'The person is describing their professional experience.';
-
       console.log(`Uploading video to Cloudinary (${Math.round(videoBuffer.length / 1024)}KB)...`);
       const videoUrl = await this.uploadToCloudinary(tmpPath);
 
-      console.log('Sending video to Gemini for inline analysis...');
-      const result = await this.model.generateContent([
-        {
-          inlineData: {
-            mimeType: mimetype,
-            data: videoBuffer.toString('base64'),
-          },
-        },
-        { text: ANALYSIS_PROMPT(contextStr) },
-      ]);
+      console.log('Transcribing audio with Whisper...');
+      const transcription = await this.transcribeAudio(tmpPath);
 
-      const rawText = result.response.text().trim();
-      const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-      const parsed = JSON.parse(cleaned);
+      console.log('Analyzing transcript with GPT-4o...');
+      const parsed = await this.analyzeTranscript(transcription, experienceContext);
 
       return {
         videoUrl,
-        transcription: parsed.transcription || '',
+        transcription,
         analysis: {
           technicalSkills: parsed.technicalSkills || [],
           spokenLanguages: parsed.spokenLanguages || [],
@@ -160,6 +178,7 @@ class VideoAnalysisService {
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',
           summary: parsed.summary || '',
         },
+        provider: 'openai',
       };
     } finally {
       if (fs.existsSync(tmpPath)) {
