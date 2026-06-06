@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Profile = require('../models/Profile');
+const Agent = require('../models/Agent');
 
 class ProfileRepository {
   async findByUserId(userId) {
@@ -32,7 +33,7 @@ class ProfileRepository {
       Object.entries(fields).forEach(([k, v]) => {
         set[`experience.${idx}.${k}`] = v;
       });
-      const res = await Profile.updateOne(filter, { $set: set });
+      const res = await Agent.updateOne(filter, { $set: set });
       if (res.matchedCount > 0) return res.modifiedCount > 0 || res.matchedCount > 0;
     }
 
@@ -44,7 +45,7 @@ class ProfileRepository {
       });
       const arrayFilter = { 'e.title': context.title };
       if (context.company) arrayFilter['e.company'] = context.company;
-      const res = await Profile.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
+      const res = await Agent.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
       return res.matchedCount > 0;
     }
 
