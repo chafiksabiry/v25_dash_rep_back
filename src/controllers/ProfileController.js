@@ -1,9 +1,11 @@
 const ProfileService = require('../services/ProfileService');
+const VideoAnalysisService = require('../services/VideoAnalysisService');
 const logger = require('../utils/logger');
 
 class ProfileController {
   constructor() {
     this.profileService = new ProfileService();
+    this.videoAnalysisService = new VideoAnalysisService();
   }
 
   async getProfile(req, res) {
@@ -454,6 +456,33 @@ class ProfileController {
     } catch (error) {
       logger.error(`Error in getPlan controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async analyzeExperienceVideo(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No video file provided' });
+      }
+
+      const experienceContext = {
+        title: req.body.title || '',
+        company: req.body.company || '',
+      };
+
+      logger.info(`Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"`);
+
+      const result = await this.videoAnalysisService.analyzeExperienceVideo(
+        req.file.buffer,
+        req.file.mimetype,
+        experienceContext
+      );
+
+      logger.info(`Video analysis complete for profile: ${req.params.id}`);
+      res.json({ data: result });
+    } catch (error) {
+      logger.error(`Error in analyzeExperienceVideo controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Video analysis failed', error: error.message });
     }
   }
 }

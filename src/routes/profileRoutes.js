@@ -1,7 +1,17 @@
 const express = require('express');
+const multer = require('multer');
 const ProfileController = require('../controllers/ProfileController');
 const { authenticateToken } = require('../middleware/auth');
 const jwt = require('jsonwebtoken');
+
+const videoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 150 * 1024 * 1024 }, // 150 MB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('video/')) return cb(null, true);
+    cb(new Error('Only video files are allowed'));
+  },
+});
 
 const router = express.Router();
 const profileController = new ProfileController();
@@ -58,5 +68,8 @@ router.get('/completion-status', profileController.getCompletionStatus.bind(prof
 
 // Get user's subscription plan
 router.get('/:id/plan', profileController.getPlan.bind(profileController));
+
+// Analyze experience video with AI (Whisper + GPT-4)
+router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
 module.exports = router; 
