@@ -1,8 +1,11 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { GoogleAIFileManager } = require('@google/generative-ai/server');
+const cloudinary = require('cloudinary').v2;
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+
+// Gemini inline video limit (~20 MB); experience clips are capped at 2 min.
+const MAX_INLINE_VIDEO_BYTES = 15 * 1024 * 1024;
 
 const ANALYSIS_PROMPT = (contextStr) => `You are an expert HR analyst and skills assessor. ${contextStr}
 
@@ -63,13 +66,59 @@ class VideoAnalysisService {
     }
 
     this.genAI = new GoogleGenerativeAI(apiKey);
-    this.fileManager = new GoogleAIFileManager(apiKey);
     this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+    this.cloudinaryEnabled = Boolean(
+      process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET
+    );
+    if (this.cloudinaryEnabled) {
+      cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET,
+      });
+    }
+
     this._initialized = true;
+  }
+
+  uploadToCloudinary(tmpPath) {
+    if (!this.cloudinaryEnabled) {
+      return Promise.reject(new Error('Cloudinary is not configured'));
+    }
+
+    return new Promise((resolve, reject) => {
+      cloudinary.uploader.upload(
+        tmpPath,
+        {
+          resource_type: 'video',
+          folder: 'experience-videos',
+          public_id: `exp-${Date.now()}`,
+        },
+        (error, result) => {
+          if (error) {
+            return reject(new Error(`Cloudinary upload failed: ${error.message}`));
+          }
+          if (!result?.secure_url) {
+            return reject(new Error('Cloudinary upload returned no URL'));
+          }
+          resolve(result.secure_url);
+        }
+      );
+    });
   }
 
   async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}) {
     this._ensureInitialized();
+
+    if (videoBuffer.length > MAX_INLINE_VIDEO_BYTES) {
+      throw new Error(
+        `Video is too large for analysis (${Math.round(videoBuffer.length / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_INLINE_VIDEO_BYTES / 1024 / 1024)}MB.`
+      );
+    }
+
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
 
@@ -80,40 +129,26 @@ class VideoAnalysisService {
         ? `The person is describing their experience as "${experienceContext.title}" at "${experienceContext.company || 'a company'}".`
         : 'The person is describing their professional experience.';
 
-      // Upload video to Gemini File API
-      console.log(`Uploading video to Gemini File API (${Math.round(videoBuffer.length / 1024)}KB)...`);
-      const uploadResponse = await this.fileManager.uploadFile(tmpPath, {
-        mimeType: mimetype,
-        displayName: `experience-${Date.now()}.${ext}`,
-      });
+      console.log(`Uploading video to Cloudinary (${Math.round(videoBuffer.length / 1024)}KB)...`);
+      const videoUrl = await this.uploadToCloudinary(tmpPath);
 
-      const fileUri = uploadResponse.file.uri;
-      const uploadedMime = uploadResponse.file.mimeType;
-
-      // Wait for file to finish processing
-      await this.waitForFileActive(uploadResponse.file.name);
-
-      console.log('Sending video to Gemini for analysis...');
+      console.log('Sending video to Gemini for inline analysis...');
       const result = await this.model.generateContent([
         {
-          fileData: {
-            mimeType: uploadedMime,
-            fileUri,
+          inlineData: {
+            mimeType: mimetype,
+            data: videoBuffer.toString('base64'),
           },
         },
         { text: ANALYSIS_PROMPT(contextStr) },
       ]);
 
       const rawText = result.response.text().trim();
-
-      // Delete uploaded file from Gemini after analysis
-      this.fileManager.deleteFile(uploadResponse.file.name).catch(() => {});
-
-      // Parse JSON — strip markdown code fences if present
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
       const parsed = JSON.parse(cleaned);
 
       return {
+        videoUrl,
         transcription: parsed.transcription || '',
         analysis: {
           technicalSkills: parsed.technicalSkills || [],
@@ -131,17 +166,6 @@ class VideoAnalysisService {
         fs.unlinkSync(tmpPath);
       }
     }
-  }
-
-  async waitForFileActive(fileName, maxWaitMs = 60000, pollMs = 2000) {
-    const deadline = Date.now() + maxWaitMs;
-    while (Date.now() < deadline) {
-      const file = await this.fileManager.getFile(fileName);
-      if (file.state === 'ACTIVE') return;
-      if (file.state === 'FAILED') throw new Error('Gemini file processing failed');
-      await new Promise((r) => setTimeout(r, pollMs));
-    }
-    throw new Error('Gemini file processing timed out');
   }
 }
 
