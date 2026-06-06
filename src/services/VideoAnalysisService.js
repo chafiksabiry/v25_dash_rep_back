@@ -6,27 +6,44 @@ const os = require('os');
 
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
-const ANALYSIS_PROMPT = (contextStr, transcription) => `You are an expert HR analyst and skills assessor. ${contextStr}
+const renderAllowedList = (label, names) => {
+  if (!Array.isArray(names) || names.length === 0) {
+    return `${label}: (no predefined list provided — return an empty array for this field)`;
+  }
+  return `${label} (choose ONLY from these exact names, copy them verbatim):\n${names.map((n) => `- ${n}`).join('\n')}`;
+};
 
-Analyze the following video transcript from a professional experience description and extract structured data.
+const buildAnalysisPrompt = (contextStr, transcription, vocab) => `You are an expert HR analyst and skills assessor. ${contextStr}
+
+Analyze the following video transcript from a professional experience description and extract structured, scored data.
 
 TRANSCRIPT:
-"${transcription || '[No speech detected — infer from context if provided]'}"
+"${transcription || '[No speech detected — infer conservatively from the provided context only]'}"
+
+STRICT VOCABULARY RULES — VERY IMPORTANT:
+- For technicalSkills, professionalSkills, softSkills, industries and activities you MUST ONLY use names taken EXACTLY from the predefined lists below.
+- Do NOT invent, rephrase, translate or merge names. Copy them character-for-character from the lists.
+- Only include an item if the transcript provides real evidence the person has it. If nothing matches a list, return an empty array for that field.
+- spokenLanguages and contactCenterSkills are NOT restricted by any list — detect them freely.
+
+${renderAllowedList('TECHNICAL SKILLS', vocab.technicalSkills)}
+
+${renderAllowedList('PROFESSIONAL SKILLS', vocab.professionalSkills)}
+
+${renderAllowedList('SOFT SKILLS', vocab.softSkills)}
+
+${renderAllowedList('INDUSTRIES', vocab.industries)}
+
+${renderAllowedList('ACTIVITIES', vocab.activities)}
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {
-  "technicalSkills": [
-    { "name": "string", "score": 0-100, "evidence": "brief quote or reason" }
-  ],
-  "spokenLanguages": [
-    { "language": "string", "level": "A1|A2|B1|B2|C1|C2|Native", "score": 0-100, "evidence": "reason" }
-  ],
-  "industries": [
-    { "name": "string", "score": 0-100 }
-  ],
-  "activities": [
-    { "name": "string", "score": 0-100 }
-  ],
+  "technicalSkills": [ { "name": "string (from TECHNICAL SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
+  "professionalSkills": [ { "name": "string (from PROFESSIONAL SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
+  "softSkills": [ { "name": "string (from SOFT SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
+  "spokenLanguages": [ { "language": "string", "level": "A1|A2|B1|B2|C1|C2|Native", "score": 0-100, "evidence": "reason" } ],
+  "industries": [ { "name": "string (from INDUSTRIES list)", "score": 0-100 } ],
+  "activities": [ { "name": "string (from ACTIVITIES list)", "score": 0-100 } ],
   "contactCenterSkills": {
     "customerService": { "score": 0-100, "notes": "string" },
     "communication": { "score": 0-100, "notes": "string" },
@@ -43,12 +60,10 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
 }
 
 Scoring rules:
-- Score 0 = not detected / not applicable
+- Score 0 = not detected / not applicable (omit such items rather than listing them at 0)
 - Score 100 = expert-level, strongly evidenced
 - Clear mention with detail → 70+
 - Vague mention → 30-60
-- For spokenLanguages: detect ALL languages actually spoken
-- For contactCenterSkills: infer transferable scores even for non-contact-center roles
 - Return pure JSON only, nothing else`;
 
 class VideoAnalysisService {
@@ -117,7 +132,17 @@ class VideoAnalysisService {
     return typeof response === 'string' ? response.trim() : String(response).trim();
   }
 
-  async analyzeTranscript(transcription, experienceContext) {
+  // Keep only AI items whose name is in the allowed list (exact, case-insensitive).
+  filterToAllowed(items, allowedNames) {
+    if (!Array.isArray(items)) return [];
+    if (!Array.isArray(allowedNames) || allowedNames.length === 0) return [];
+    const allowedByLower = new Map(allowedNames.map((n) => [String(n).toLowerCase(), String(n)]));
+    return items
+      .filter((item) => item && item.name && allowedByLower.has(String(item.name).toLowerCase()))
+      .map((item) => ({ ...item, name: allowedByLower.get(String(item.name).toLowerCase()) }));
+  }
+
+  async analyzeTranscript(transcription, experienceContext, vocab) {
     const contextStr = experienceContext.title
       ? `The person is describing their experience as "${experienceContext.title}" at "${experienceContext.company || 'a company'}".`
       : 'The person is describing their professional experience.';
@@ -127,21 +152,21 @@ class VideoAnalysisService {
       messages: [
         {
           role: 'system',
-          content: 'You are a JSON-only API. Return only valid JSON, no markdown code blocks, no explanations.',
+          content: 'You are a JSON-only API. Return only valid JSON, no markdown code blocks, no explanations. You strictly respect the provided allowed vocabulary lists.',
         },
         {
           role: 'user',
-          content: ANALYSIS_PROMPT(contextStr, transcription),
+          content: buildAnalysisPrompt(contextStr, transcription, vocab),
         },
       ],
-      temperature: 0.3,
+      temperature: 0.2,
       response_format: { type: 'json_object' },
     });
 
     return JSON.parse(response.choices[0].message.content);
   }
 
-  async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}) {
+  async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}, vocab = {}) {
     this._ensureInitialized();
 
     if (videoBuffer.length > MAX_VIDEO_BYTES) {
@@ -149,6 +174,14 @@ class VideoAnalysisService {
         `Video is too large for analysis (${Math.round(videoBuffer.length / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)}MB.`
       );
     }
+
+    const safeVocab = {
+      technicalSkills: vocab.technicalSkills || [],
+      professionalSkills: vocab.professionalSkills || [],
+      softSkills: vocab.softSkills || [],
+      industries: vocab.industries || [],
+      activities: vocab.activities || [],
+    };
 
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
@@ -162,17 +195,20 @@ class VideoAnalysisService {
       console.log('Transcribing audio with Whisper...');
       const transcription = await this.transcribeAudio(tmpPath);
 
-      console.log('Analyzing transcript with GPT-4o...');
-      const parsed = await this.analyzeTranscript(transcription, experienceContext);
+      console.log('Analyzing transcript with GPT-4o (constrained to DB vocabulary)...');
+      const parsed = await this.analyzeTranscript(transcription, experienceContext, safeVocab);
 
+      // Enforce the vocabulary server-side as a safety net against the model drifting.
       return {
         videoUrl,
         transcription,
         analysis: {
-          technicalSkills: parsed.technicalSkills || [],
+          technicalSkills: this.filterToAllowed(parsed.technicalSkills, safeVocab.technicalSkills),
+          professionalSkills: this.filterToAllowed(parsed.professionalSkills, safeVocab.professionalSkills),
+          softSkills: this.filterToAllowed(parsed.softSkills, safeVocab.softSkills),
           spokenLanguages: parsed.spokenLanguages || [],
-          industries: parsed.industries || [],
-          activities: parsed.activities || [],
+          industries: this.filterToAllowed(parsed.industries, safeVocab.industries),
+          activities: this.filterToAllowed(parsed.activities, safeVocab.activities),
           contactCenterSkills: parsed.contactCenterSkills || {},
           overallConfidence: parsed.overallConfidence || 0,
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',

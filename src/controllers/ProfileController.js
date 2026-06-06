@@ -477,12 +477,40 @@ class ProfileController {
         company: req.body.company || '',
       };
 
-      logger.info(`Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"`);
+      const parseList = (raw) => {
+        if (!raw) return [];
+        try {
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          if (!Array.isArray(parsed)) return [];
+          return parsed
+            .map((item) => (typeof item === 'string' ? item : item?.name))
+            .filter((name) => typeof name === 'string' && name.trim())
+            .map((name) => name.trim());
+        } catch (e) {
+          logger.warn(`Could not parse allowed vocabulary list: ${e.message}`);
+          return [];
+        }
+      };
+
+      const vocab = {
+        technicalSkills: parseList(req.body.allowedTechnicalSkills),
+        professionalSkills: parseList(req.body.allowedProfessionalSkills),
+        softSkills: parseList(req.body.allowedSoftSkills),
+        industries: parseList(req.body.allowedIndustries),
+        activities: parseList(req.body.allowedActivities),
+      };
+
+      logger.info(
+        `Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}" ` +
+          `(vocab: tech=${vocab.technicalSkills.length}, prof=${vocab.professionalSkills.length}, ` +
+          `soft=${vocab.softSkills.length}, ind=${vocab.industries.length}, act=${vocab.activities.length})`
+      );
 
       const result = await this.videoAnalysisService.analyzeExperienceVideo(
         req.file.buffer,
         req.file.mimetype,
-        experienceContext
+        experienceContext,
+        vocab
       );
 
       logger.info(`Video analysis complete for profile: ${req.params.id}`);
