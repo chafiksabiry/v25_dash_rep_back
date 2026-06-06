@@ -5,7 +5,14 @@ const logger = require('../utils/logger');
 class ProfileController {
   constructor() {
     this.profileService = new ProfileService();
-    this.videoAnalysisService = new VideoAnalysisService();
+    this._videoAnalysisService = null;
+  }
+
+  get videoAnalysisService() {
+    if (!this._videoAnalysisService) {
+      this._videoAnalysisService = new VideoAnalysisService();
+    }
+    return this._videoAnalysisService;
   }
 
   async getProfile(req, res) {

@@ -50,16 +50,25 @@ Scoring rules:
 
 class VideoAnalysisService {
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
+    this._initialized = false;
+  }
+
+  _ensureInitialized() {
+    if (this._initialized) return;
+
+    const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error('GEMINI_API_KEY environment variable is not set');
+      throw new Error('GOOGLE_API_KEY or GEMINI_API_KEY environment variable is not set');
     }
+
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.fileManager = new GoogleAIFileManager(apiKey);
     this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    this._initialized = true;
   }
 
   async analyzeExperienceVideo(videoBuffer, mimetype, experienceContext = {}) {
+    this._ensureInitialized();
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
 
