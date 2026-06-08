@@ -8,6 +8,15 @@ const toObjectId = (id) => {
   return mongoose.isValidObjectId(id) ? new mongoose.Types.ObjectId(id) : null;
 };
 
+// Bilingual AI text fields are stored as { en, fr }; the linguistic-profile
+// aggregate keeps a single canonical string, so flatten to English here.
+const flattenText = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') return value.en || value.fr || '';
+  return '';
+};
+
 /**
  * Normalize a spoken-language entry to a CEFR proficiency.
  * Uses the explicit level when valid ("Native" → C2), otherwise derives it
@@ -133,16 +142,17 @@ const aggregateFromExperiences = (experiences) => {
       if (!prof) return;
 
       const score = typeof entry.score === 'number' ? entry.score : 0;
+      const evidence = flattenText(entry.evidence);
       const current = langMap.get(id);
       if (!current) {
-        langMap.set(id, { proficiency: prof, score, evidence: entry.evidence || '' });
+        langMap.set(id, { proficiency: prof, score, evidence });
         return;
       }
 
       langMap.set(id, {
         proficiency: maxProficiency(current.proficiency, prof),
         score: maxScore(current.score, score),
-        evidence: score >= current.score ? (entry.evidence || current.evidence) : current.evidence,
+        evidence: score >= current.score ? (evidence || current.evidence) : current.evidence,
       });
     });
 

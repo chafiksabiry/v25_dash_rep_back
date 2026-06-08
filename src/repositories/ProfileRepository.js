@@ -81,9 +81,6 @@ class ProfileRepository {
       videoAnalyzedAt: new Date(),
     };
 
-    // Off-topic videos must NOT enrich the profile with skills/languages.
-    const onTopic = payload.relevance ? payload.relevance.onTopic !== false : true;
-
     // Build the profile filter (_id when valid, otherwise userId).
     const filter = mongoose.isValidObjectId(profileId)
       ? { _id: profileId }
@@ -98,7 +95,9 @@ class ProfileRepository {
       });
       const res = await Agent.updateOne(filter, { $set: set });
       if (res.matchedCount > 0) {
-        if (onTopic) await this.applyVideoInsights(filter);
+        // Always aggregate: off-topic experiences already have empty skills/
+        // industries/activities, so only their (real) spoken languages flow up.
+        await this.applyVideoInsights(filter);
         return true;
       }
     }
@@ -113,7 +112,7 @@ class ProfileRepository {
       if (context.company) arrayFilter['e.company'] = context.company;
       const res = await Agent.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
       if (res.matchedCount > 0) {
-        if (onTopic) await this.applyVideoInsights(filter);
+        await this.applyVideoInsights(filter);
         return true;
       }
     }

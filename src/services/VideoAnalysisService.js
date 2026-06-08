@@ -69,6 +69,11 @@ Analyze the following video transcript from a professional experience descriptio
 TRANSCRIPT:
 "${transcription || '[No speech detected — infer conservatively from the provided context only]'}"
 
+TONE & LANGUAGE — VERY IMPORTANT:
+- Address the candidate DIRECTLY in the second person (English "You ...", French polite "Vous ...").
+- Every free-text field (evidence, notes, summary, reason) MUST be a bilingual object: { "en": "English text", "fr": "texte français" }.
+- The French text must use the polite "vous" form. Keep both versions equivalent in meaning.
+
 RELEVANCE / OFF-TOPIC CHECK — VERY IMPORTANT:
 - The speaker is supposed to describe the SPECIFIC professional experience given in the context above.
 - Judge from the TRANSCRIPT whether the speech is actually ABOUT that role/company and professional experience in general.
@@ -91,28 +96,29 @@ ${renderAllowedList('INDUSTRIES', vocab.industries)}
 
 ${renderAllowedList('ACTIVITIES', vocab.activities)}
 
-Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks).
+Every "evidence", "notes", "reason" and "summary" field MUST be a bilingual object { "en": "...", "fr": "..." }:
 {
-  "technicalSkills": [ { "name": "string (from TECHNICAL SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
-  "professionalSkills": [ { "name": "string (from PROFESSIONAL SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
-  "softSkills": [ { "name": "string (from SOFT SKILLS list)", "score": 0-100, "evidence": "brief quote or reason" } ],
-  "spokenLanguages": [ { "language": "string", "level": "A1|A2|B1|B2|C1|C2|Native", "score": 0-100, "evidence": "reason" } ],
+  "technicalSkills": [ { "name": "string (from TECHNICAL SKILLS list)", "score": 0-100, "evidence": { "en": "brief reason", "fr": "raison courte" } } ],
+  "professionalSkills": [ { "name": "string (from PROFESSIONAL SKILLS list)", "score": 0-100, "evidence": { "en": "...", "fr": "..." } } ],
+  "softSkills": [ { "name": "string (from SOFT SKILLS list)", "score": 0-100, "evidence": { "en": "...", "fr": "..." } } ],
+  "spokenLanguages": [ { "language": "string", "level": "A1|A2|B1|B2|C1|C2|Native", "score": 0-100, "evidence": { "en": "...", "fr": "..." } } ],
   "industries": [ { "name": "string (from INDUSTRIES list)", "score": 0-100 } ],
   "activities": [ { "name": "string (from ACTIVITIES list)", "score": 0-100 } ],
   "contactCenterSkills": {
-    "customerService": { "score": 0-100, "notes": "string" },
-    "communication": { "score": 0-100, "notes": "string" },
-    "problemSolving": { "score": 0-100, "notes": "string" },
-    "empathy": { "score": 0-100, "notes": "string" },
-    "multitasking": { "score": 0-100, "notes": "string" },
-    "salesOrientation": { "score": 0-100, "notes": "string" },
-    "conflictResolution": { "score": 0-100, "notes": "string" },
-    "productKnowledge": { "score": 0-100, "notes": "string" }
+    "customerService": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "communication": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "problemSolving": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "empathy": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "multitasking": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "salesOrientation": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "conflictResolution": { "score": 0-100, "notes": { "en": "...", "fr": "..." } },
+    "productKnowledge": { "score": 0-100, "notes": { "en": "...", "fr": "..." } }
   },
   "overallConfidence": 0-100,
   "detectedLanguageOfSpeech": "string",
-  "relevance": { "onTopic": true, "score": 0-100, "reason": "why it is or is not about the stated experience" },
-  "summary": "2-3 sentence professional summary of this experience"
+  "relevance": { "onTopic": true, "score": 0-100, "reason": { "en": "why it is or is not about the stated experience", "fr": "pourquoi cela concerne ou non l'expérience indiquée" } },
+  "summary": { "en": "2-3 sentence professional summary addressing you directly", "fr": "résumé professionnel de 2-3 phrases vous concernant directement" }
 }
 
 Scoring rules:
@@ -151,6 +157,10 @@ ASSESSMENT RULES:
 - Each sub-score (fluency, grammar, vocabulary, coherence) must be justified by a concrete observation in "feedback". If you cannot justify it, score it lower.
 - overallScore must be roughly the average of the sub-scores, not the maximum.
 
+TONE & LANGUAGE — VERY IMPORTANT:
+- Address the candidate DIRECTLY in the second person (English "You ...", French polite "Vous ...").
+- Every text field ("feedback", "strengths", "areasForImprovement") MUST be a bilingual object { "en": "English", "fr": "français (vouvoiement)" } with equivalent meaning.
+
 Return ONLY valid JSON (no markdown):
 {
   "assessable": true,
@@ -159,13 +169,13 @@ Return ONLY valid JSON (no markdown):
       "language": "string (platform name if it matches the list, else the plain language name)",
       "cefr": "A1|A2|B1|B2|C1|C2",
       "overallScore": 0-100,
-      "fluency": { "score": 0-100, "feedback": "string" },
-      "grammar": { "score": 0-100, "feedback": "string" },
-      "vocabulary": { "score": 0-100, "feedback": "string" },
-      "coherence": { "score": 0-100, "feedback": "string" },
-      "pronunciationEstimate": { "score": 0-100, "confidence": "low|medium|high", "feedback": "string" },
-      "strengths": "string",
-      "areasForImprovement": "string"
+      "fluency": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+      "grammar": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+      "vocabulary": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+      "coherence": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+      "pronunciationEstimate": { "score": 0-100, "confidence": "low|medium|high", "feedback": { "en": "...", "fr": "..." } },
+      "strengths": { "en": "...", "fr": "..." },
+      "areasForImprovement": { "en": "...", "fr": "..." }
     }
   ]
 }`;
@@ -182,6 +192,8 @@ Check for signs of fraud or non-genuine recordings:
 - Is it plausibly the SAME person across all frames?
 - Any obvious manipulation, overlays, or spoofing artifacts?
 
+Address the candidate directly in the second person, and provide each reason bilingually (English + French polite "vous").
+
 Return ONLY valid JSON (no markdown):
 {
   "faceDetected": true,
@@ -190,7 +202,7 @@ Return ONLY valid JSON (no markdown):
   "looksLive": true,
   "livenessConfidence": 0-100,
   "fraudRisk": "low|medium|high",
-  "reasons": ["short reason", "..."]
+  "reasons": [ { "en": "short reason", "fr": "raison courte" } ]
 }`;
 
 class VideoAnalysisService {
@@ -400,10 +412,11 @@ class VideoAnalysisService {
     const wordCount = transcription.trim().split(/\s+/).filter(Boolean).length;
     const scoreCap = this.evidenceScoreCap(wordCount);
     const clamp = (v) => Math.max(0, Math.min(scoreCap, Math.round(Number(v) || 0)));
+    const emptyText = { en: '', fr: '' };
     const clampSub = (sub) =>
       sub && typeof sub === 'object'
         ? { ...sub, score: clamp(sub.score) }
-        : { score: 0, feedback: '' };
+        : { score: 0, feedback: { ...emptyText } };
 
     const lookup = buildLanguageLookup(vocabLanguages);
     const languages = (parsed.languages || []).map((entry) => {
@@ -419,9 +432,9 @@ class VideoAnalysisService {
         coherence: clampSub(entry.coherence),
         pronunciationEstimate: entry.pronunciationEstimate
           ? { ...entry.pronunciationEstimate, score: clamp(entry.pronunciationEstimate.score), confidence: entry.pronunciationEstimate.confidence || 'low' }
-          : { score: 0, confidence: 'low', feedback: '' },
-        strengths: entry.strengths || '',
-        areasForImprovement: entry.areasForImprovement || '',
+          : { score: 0, confidence: 'low', feedback: { ...emptyText } },
+        strengths: entry.strengths || { ...emptyText },
+        areasForImprovement: entry.areasForImprovement || { ...emptyText },
         evidenceWords: wordCount,
       };
     });
@@ -458,10 +471,13 @@ class VideoAnalysisService {
         ? Math.max(0, Math.min(100, Math.round(relevance.score)))
         : 100;
     const onTopic = relevance?.onTopic !== false && score >= 40;
+    const defaultReason = onTopic
+      ? { en: 'Your speech matches the stated experience.', fr: 'Votre présentation correspond à l’expérience indiquée.' }
+      : { en: 'Your speech does not match the stated experience.', fr: 'Votre présentation ne correspond pas à l’expérience indiquée.' };
     return {
       onTopic,
       score,
-      reason: relevance?.reason || (onTopic ? 'Speech matches the stated experience' : 'Speech does not match the stated experience'),
+      reason: relevance?.reason || defaultReason,
     };
   }
 
@@ -547,7 +563,7 @@ class VideoAnalysisService {
         looksLive: null,
         livenessConfidence: 0,
         fraudRisk: 'unknown',
-        reasons: ['Anti-fraud check could not be completed'],
+        reasons: [{ en: 'Anti-fraud check could not be completed.', fr: 'La vérification anti-fraude n’a pas pu être effectuée.' }],
         checkedFrames: 0,
       };
     }
@@ -667,7 +683,7 @@ class VideoAnalysisService {
           overallConfidence: parsed.overallConfidence || 0,
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',
           relevance,
-          summary: parsed.summary || '',
+          summary: parsed.summary || { en: '', fr: '' },
         },
         provider: 'openai',
       };
