@@ -1,6 +1,11 @@
 const mongoose = require('mongoose');
 const Profile = require('../models/Profile');
 const Agent = require('../models/Agent');
+const logger = require('../utils/logger');
+const {
+  aggregateFromExperiences,
+  buildProfileUpdate,
+} = require('../services/VideoInsightsService');
 
 class ProfileRepository {
   async findByUserId(userId) {
@@ -57,7 +62,10 @@ class ProfileRepository {
         set[`experience.${idx}.${k}`] = v;
       });
       const res = await Agent.updateOne(filter, { $set: set });
-      if (res.matchedCount > 0) return res.modifiedCount > 0 || res.matchedCount > 0;
+      if (res.matchedCount > 0) {
+        await this.applyVideoInsights(filter);
+        return true;
+      }
     }
 
     // Fallback: match the experience entry by title (+ company) using arrayFilters.
@@ -69,10 +77,44 @@ class ProfileRepository {
       const arrayFilter = { 'e.title': context.title };
       if (context.company) arrayFilter['e.company'] = context.company;
       const res = await Agent.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
-      return res.matchedCount > 0;
+      if (res.matchedCount > 0) {
+        await this.applyVideoInsights(filter);
+        return true;
+      }
     }
 
     return false;
+  }
+
+  /**
+   * Aggregate every experience's videoAnalysis into profile-level skills,
+   * languages, industries and activities. Languages keep the highest CEFR
+   * level across experiences; skills are added (highest level wins). This is
+   * additive and never removes manually-entered data.
+   */
+  async applyVideoInsights(filter) {
+    try {
+      const agent = await Agent.findOne(filter).lean();
+      if (!agent) return false;
+
+      const insights = aggregateFromExperiences(agent.experience);
+      const set = buildProfileUpdate(agent, insights);
+
+      if (Object.keys(set).length === 0) return false;
+
+      await Agent.updateOne(filter, { $set: set });
+      logger.info(
+        `Applied video insights to agent ${agent._id}: ` +
+          `${set['personalInfo.languages']?.length || 0} languages, ` +
+          `tech=${set['skills.technical']?.length || 0}, ` +
+          `prof=${set['skills.professional']?.length || 0}, ` +
+          `soft=${set['skills.soft']?.length || 0}`
+      );
+      return true;
+    } catch (error) {
+      logger.error(`Failed to apply video insights: ${error.message}`, { error });
+      return false;
+    }
   }
 
   async create(profileData) {
