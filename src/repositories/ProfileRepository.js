@@ -159,7 +159,9 @@ class ProfileRepository {
           `${set['personalInfo.languages']?.length || 0} languages, ` +
           `tech=${set['skills.technical']?.length || 0}, ` +
           `prof=${set['skills.professional']?.length || 0}, ` +
-          `soft=${set['skills.soft']?.length || 0}`
+          `soft=${set['skills.soft']?.length || 0}, ` +
+          `industries=${set['professionalSummary.industries']?.length || 0}, ` +
+          `activities=${set['professionalSummary.activities']?.length || 0}`
       );
       return true;
     } catch (error) {

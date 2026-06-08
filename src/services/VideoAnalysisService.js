@@ -91,6 +91,11 @@ STRICT VOCABULARY RULES — VERY IMPORTANT:
 - Only include an item if the transcript provides real evidence the person has it. If nothing matches a list, return an empty array for that field.
 - spokenLanguages and contactCenterSkills are NOT restricted by any list — detect them freely.
 
+ACTIVITIES — DETECT GENEROUSLY:
+- ACTIVITIES describe WHAT the person actually DID day to day (their responsibilities, missions, tasks), e.g. prospecting, advising clients, closing sales, managing quotes, handling support.
+- Read the transcript for any described task or responsibility and map each one to the CLOSEST matching name in the ACTIVITIES list (exact copy).
+- Be thorough: if the person clearly describes doing something that corresponds to an activity in the list, include it even if they don't use the exact wording. Do NOT return an empty activities array when the speech describes concrete work that matches the list.
+
 ${renderAllowedList('TECHNICAL SKILLS', vocab.technicalSkills)}
 
 ${renderAllowedList('PROFESSIONAL SKILLS', vocab.professionalSkills)}
