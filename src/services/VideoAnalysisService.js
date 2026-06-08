@@ -25,6 +25,51 @@ class VideoValidationError extends Error {
   }
 }
 
+// Minimum number of REAL spoken words required before we detect/assess any
+// language. Below this, the person essentially said nothing.
+const MIN_MEANINGFUL_WORDS = 4;
+
+// Whisper frequently hallucinates a short phrase on silent / near-silent audio
+// (e.g. "Thank you for watching!", "Sous-titres réalisés par la communauté
+// d'Amara.org"). These must NOT count as real speech, otherwise a language is
+// detected and added to the profile when the person actually said nothing.
+const WHISPER_HALLUCINATIONS = [
+  'thank you', 'thank you for watching', 'thanks for watching',
+  'thank you for watching this video', 'thank you so much for watching',
+  'please subscribe', 'like and subscribe', 'subscribe to my channel',
+  'see you next time', 'see you in the next video', 'see you',
+  'bye', 'bye bye', 'goodbye', 'okay', 'ok', 'you', 'so', 'hmm', 'uh', 'um',
+  'merci', "merci d'avoir regardé", "merci d'avoir regardé cette vidéo",
+  'merci de votre attention', 'au revoir', 'sous-titres',
+  "sous-titres réalisés par la communauté d'amara.org",
+  'sous-titrage société radio-canada', 'amara.org', 'amara org',
+];
+
+// Normalize text for hallucination matching: lowercase, strip accents and
+// punctuation, collapse whitespace, and pad with spaces for word-boundary safe
+// substring removal.
+const normalizeForSpeechCheck = (text) =>
+  ` ${String(text || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()} `;
+
+// Count the real, meaningful words in a transcript after removing known Whisper
+// hallucination phrases. Returns 0 when the person essentially said nothing.
+const meaningfulSpeechWordCount = (transcription) => {
+  let t = normalizeForSpeechCheck(transcription);
+  if (t.trim() === '') return 0;
+  for (const phrase of WHISPER_HALLUCINATIONS) {
+    const clean = normalizeForSpeechCheck(phrase);
+    if (clean.trim() === '') continue;
+    while (t.includes(clean)) t = t.replace(clean, ' ');
+    t = ` ${t.replace(/\s+/g, ' ').trim()} `;
+  }
+  return t.trim().split(/\s+/).filter(Boolean).length;
+};
+
 const vocabNames = (items) =>
   (Array.isArray(items) ? items : []).map((item) => (typeof item === 'string' ? item : item?.name)).filter(Boolean);
 
@@ -401,7 +446,8 @@ class VideoAnalysisService {
    * transcript. Resolves language names to platform ObjectId refs when possible.
    */
   async assessLanguages(transcription, detectedLanguage, vocabLanguages) {
-    if (!transcription || transcription.trim().length < 15) {
+    // No real speech (silence + Whisper hallucination) → assess nothing.
+    if (meaningfulSpeechWordCount(transcription) < MIN_MEANINGFUL_WORDS) {
       return { assessable: false, languages: [] };
     }
 
@@ -681,23 +727,42 @@ class VideoAnalysisService {
       console.log('Transcribing audio with Whisper...');
       const transcription = await this.transcribeAudio(audioTmpPath);
 
+      // If the person said essentially nothing (silence → Whisper hallucinates a
+      // stock phrase like "Thank you for watching!"), we must NOT detect or add a
+      // language. We still run the rest of the analysis, but force the language
+      // outputs to empty so nothing bogus reaches the profile.
+      const hasMeaningfulSpeech = meaningfulSpeechWordCount(transcription) >= MIN_MEANINGFUL_WORDS;
+      if (!hasMeaningfulSpeech) {
+        console.log(
+          `No meaningful speech detected (transcript="${(transcription || '').slice(0, 80)}") — ` +
+            'skipping language detection/assessment.'
+        );
+      }
+
       console.log('Analyzing transcript with GPT-4o (constrained to DB vocabulary)...');
       const parsed = await this.analyzeTranscript(transcription, experienceContext, safeVocab);
 
       // Dedicated language assessment + anti-fraud facial check run in parallel.
       console.log('Running language assessment and anti-fraud facial check...');
-      const [languageAssessment, fraudCheck] = await Promise.all([
+      const [rawLanguageAssessment, fraudCheck] = await Promise.all([
         this.assessLanguages(transcription, parsed.detectedLanguageOfSpeech, safeVocab.languages),
         this.detectFacesAndFraud(upload.publicId, upload.duration, experienceContext.referencePhotoUrl),
       ]);
 
+      const languageAssessment = hasMeaningfulSpeech
+        ? rawLanguageAssessment
+        : { assessable: false, languages: [] };
+
       // The raw spokenLanguages score is only a detection confidence (≈100 for a
       // native speaker). Replace it with the evidence-based assessment score so the
-      // UI bar reflects real proficiency instead of a flat 100%.
-      const spokenLanguages = this.mergeAssessmentScores(
-        this.resolveLanguageRefs(parsed.spokenLanguages, safeVocab.languages),
-        languageAssessment
-      );
+      // UI bar reflects real proficiency instead of a flat 100%. When there is no
+      // real speech, we drop spoken languages entirely (nothing added to profile).
+      const spokenLanguages = hasMeaningfulSpeech
+        ? this.mergeAssessmentScores(
+            this.resolveLanguageRefs(parsed.spokenLanguages, safeVocab.languages),
+            languageAssessment
+          )
+        : [];
 
       // Relevance is now informational only: we ALWAYS extract whatever skills are
       // genuinely evidenced, and keep the relevance flag just to warn the user when
