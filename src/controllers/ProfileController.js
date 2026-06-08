@@ -474,12 +474,19 @@ class ProfileController {
         return res.status(400).json({ message: 'No video file provided' });
       }
 
+      // Reference photo for identity verification (face match vs. profile photo).
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(req.params.id);
+
       const experienceContext = {
         title: req.body.title || '',
         company: req.body.company || '',
+        referencePhotoUrl,
       };
 
-      logger.info(`Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"`);
+      logger.info(
+        `Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"` +
+          ` (identity reference photo: ${referencePhotoUrl ? 'yes' : 'no'})`
+      );
 
       const result = await this.videoAnalysisService.analyzeExperienceVideo(
         req.file.buffer,

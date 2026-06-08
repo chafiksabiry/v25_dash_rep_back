@@ -13,6 +13,23 @@ class ProfileRepository {
   }
 
   /**
+   * Fetch the agent's profile photo URL (used as the identity reference when
+   * verifying that the person in the experience video matches the account).
+   */
+  async getReferencePhotoUrl(profileId) {
+    const filter = mongoose.isValidObjectId(profileId)
+      ? { _id: profileId }
+      : { userId: profileId };
+    try {
+      const agent = await Agent.findOne(filter, { 'personalInfo.photo.url': 1 }).lean();
+      return agent?.personalInfo?.photo?.url || null;
+    } catch (err) {
+      logger.warn(`Could not load reference photo for profile ${profileId}: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
    * Persist the AI video analysis onto a single experience entry.
    * The profile is matched by _id (falling back to userId), and the
    * experience entry by array index (falling back to title/company match).

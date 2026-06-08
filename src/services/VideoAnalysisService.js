@@ -189,13 +189,23 @@ Return ONLY valid JSON (no markdown):
 const FRAUD_SYSTEM_PROMPT =
   'You are a fraud-detection vision system for an identity-sensitive hiring platform. You receive several still frames sampled from one short self-introduction video. Return only valid JSON.';
 
-const buildFraudPrompt = () => `Analyze these frames sampled from a SINGLE self-introduction video.
+const buildFraudPrompt = (hasReference = false) => `Analyze the provided images.
+${
+  hasReference
+    ? 'The FIRST image is the candidate\'s official PROFILE PHOTO (identity reference). The REMAINING images are frames sampled from a SINGLE self-introduction video.'
+    : 'The images are frames sampled from a SINGLE self-introduction video.'
+}
 
 Check for signs of fraud or non-genuine recordings:
-- Is there exactly ONE real, live human face visible (not zero, not several different people)?
+- Is there exactly ONE real, live human face visible in the video frames (not zero, not several different people)?
 - Does it look like a live person filmed by a webcam, NOT a photo, a screen/monitor re-filming, a printed picture, a deepfake, or an AI-generated avatar?
-- Is it plausibly the SAME person across all frames?
+- Is it plausibly the SAME person across all video frames?
 - Any obvious manipulation, overlays, or spoofing artifacts?
+${
+  hasReference
+    ? `- IDENTITY MATCH: Is the person in the video frames the SAME person as in the profile photo? Compare facial features (face shape, eyes, nose, mouth, overall appearance). Ignore differences in lighting, angle, hairstyle, beard length, glasses or clothing. Set "identityMatch" accordingly and give "identityConfidence" (0-100). If you cannot see a face in either the photo or the video, set "identityMatch" to null.`
+    : '- No reference photo was provided, so set "identityMatch" to null and "identityConfidence" to 0.'
+}
 
 Address the candidate directly in the second person, and provide each reason bilingually (English + French polite "vous").
 
@@ -206,6 +216,8 @@ Return ONLY valid JSON (no markdown):
   "samePersonAcrossFrames": true,
   "looksLive": true,
   "livenessConfidence": 0-100,
+  "identityMatch": true,
+  "identityConfidence": 0-100,
   "fraudRisk": "low|medium|high",
   "reasons": [ { "en": "short reason", "fr": "raison courte" } ]
 }`;
@@ -521,7 +533,7 @@ class VideoAnalysisService {
    * Fails open (returns a neutral result) if anything goes wrong so a transient
    * vision error never blocks a legitimate analysis.
    */
-  async detectFacesAndFraud(publicId, duration) {
+  async detectFacesAndFraud(publicId, duration, referencePhotoUrl = null) {
     const safeDuration = typeof duration === 'number' && duration > 0 ? duration : 30;
     const offsets = [
       Math.floor(safeDuration * 0.15),
@@ -529,10 +541,15 @@ class VideoAnalysisService {
       Math.floor(safeDuration * 0.85),
     ];
 
-    const imageContent = offsets.map((offset) => ({
+    const hasReference = Boolean(referencePhotoUrl);
+    const frameContent = offsets.map((offset) => ({
       type: 'image_url',
       image_url: { url: this.buildFrameUrl(publicId, offset), detail: 'low' },
     }));
+    // Reference profile photo goes FIRST so the prompt can address it as image #1.
+    const imageContent = hasReference
+      ? [{ type: 'image_url', image_url: { url: referencePhotoUrl, detail: 'low' } }, ...frameContent]
+      : frameContent;
 
     try {
       const response = await this.openai.chat.completions.create({
@@ -541,7 +558,7 @@ class VideoAnalysisService {
           { role: 'system', content: FRAUD_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: [{ type: 'text', text: buildFraudPrompt() }, ...imageContent],
+            content: [{ type: 'text', text: buildFraudPrompt(hasReference) }, ...imageContent],
           },
         ],
         temperature: 0,
@@ -549,14 +566,36 @@ class VideoAnalysisService {
       });
 
       const parsed = JSON.parse(response.choices[0].message.content);
+      const identityMatch =
+        parsed.identityMatch === true ? true : parsed.identityMatch === false ? false : null;
+      const identityConfidence =
+        typeof parsed.identityConfidence === 'number'
+          ? Math.max(0, Math.min(100, Math.round(parsed.identityConfidence)))
+          : 0;
+
+      let fraudRisk = ['low', 'medium', 'high'].includes(parsed.fraudRisk) ? parsed.fraudRisk : 'medium';
+      const reasons = Array.isArray(parsed.reasons) ? parsed.reasons : [];
+
+      // A confirmed identity mismatch against the profile photo is a strong fraud signal.
+      if (hasReference && identityMatch === false) {
+        fraudRisk = 'high';
+        reasons.unshift({
+          en: 'The person in the video does not match your profile photo.',
+          fr: 'La personne dans la vidéo ne correspond pas à votre photo de profil.',
+        });
+      }
+
       return {
         faceDetected: parsed.faceDetected === true,
         faceCount: typeof parsed.faceCount === 'number' ? parsed.faceCount : 0,
         samePersonAcrossFrames: parsed.samePersonAcrossFrames !== false,
         looksLive: parsed.looksLive === true,
         livenessConfidence: typeof parsed.livenessConfidence === 'number' ? parsed.livenessConfidence : 0,
-        fraudRisk: ['low', 'medium', 'high'].includes(parsed.fraudRisk) ? parsed.fraudRisk : 'medium',
-        reasons: Array.isArray(parsed.reasons) ? parsed.reasons : [],
+        identityMatch,
+        identityConfidence,
+        identityChecked: hasReference,
+        fraudRisk,
+        reasons,
         checkedFrames: offsets.length,
       };
     } catch (err) {
@@ -567,6 +606,9 @@ class VideoAnalysisService {
         samePersonAcrossFrames: null,
         looksLive: null,
         livenessConfidence: 0,
+        identityMatch: null,
+        identityConfidence: 0,
+        identityChecked: hasReference,
         fraudRisk: 'unknown',
         reasons: [{ en: 'Anti-fraud check could not be completed.', fr: 'La vérification anti-fraude n’a pas pu être effectuée.' }],
         checkedFrames: 0,
@@ -641,7 +683,7 @@ class VideoAnalysisService {
       console.log('Running language assessment and anti-fraud facial check...');
       const [languageAssessment, fraudCheck] = await Promise.all([
         this.assessLanguages(transcription, parsed.detectedLanguageOfSpeech, safeVocab.languages),
-        this.detectFacesAndFraud(upload.publicId, upload.duration),
+        this.detectFacesAndFraud(upload.publicId, upload.duration, experienceContext.referencePhotoUrl),
       ]);
 
       // The raw spokenLanguages score is only a detection confidence (≈100 for a
