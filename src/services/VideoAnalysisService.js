@@ -69,6 +69,12 @@ Analyze the following video transcript from a professional experience descriptio
 TRANSCRIPT:
 "${transcription || '[No speech detected — infer conservatively from the provided context only]'}"
 
+RELEVANCE / OFF-TOPIC CHECK — VERY IMPORTANT:
+- The speaker is supposed to describe the SPECIFIC professional experience given in the context above.
+- Judge from the TRANSCRIPT whether the speech is actually ABOUT that role/company and professional experience in general.
+- If the transcript is unrelated (random talk, testing the mic, a different unrelated topic, jokes, silence, advertising, reading something off-topic, etc.), it is OFF-TOPIC.
+- When OFF-TOPIC: set "relevance.onTopic" to false, give a low "relevance.score", and DO NOT extract skills/industries/activities from unrelated content (return empty arrays for them). Only assess spokenLanguages from whatever is actually spoken.
+
 STRICT VOCABULARY RULES — VERY IMPORTANT:
 - For technicalSkills, professionalSkills, softSkills, industries and activities you MUST ONLY use names taken EXACTLY from the predefined lists below.
 - Do NOT invent, rephrase, translate or merge names. Copy them character-for-character from the lists.
@@ -105,6 +111,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no code 
   },
   "overallConfidence": 0-100,
   "detectedLanguageOfSpeech": "string",
+  "relevance": { "onTopic": true, "score": 0-100, "reason": "why it is or is not about the stated experience" },
   "summary": "2-3 sentence professional summary of this experience"
 }
 
@@ -113,6 +120,7 @@ Scoring rules:
 - Score 100 = expert-level, strongly evidenced
 - Clear mention with detail → 70+
 - Vague mention → 30-60
+- relevance.score: 80-100 = clearly about the stated experience; 40-70 = loosely related; 0-30 = off-topic/unrelated.
 - Return pure JSON only, nothing else`;
 
 // Dedicated, fine-grained spoken-language assessment built from the transcript
@@ -133,7 +141,15 @@ ASSESSMENT RULES:
 - Pronunciation cannot be measured from text — estimate it conservatively from word choice/coherence and clearly mark lower confidence for it.
 - If the transcript is empty or too short to judge, return an empty "languages" array and set "assessable" to false.
 - Map every score to the CEFR scale honestly: A1 (very basic) → C2 (mastery / native-like).
-- Do NOT inflate scores. A short fluent paragraph is typically B2–C1, not automatically C2.
+- NEVER default to 100. 100 means flawless C2 mastery with rich vocabulary, complex syntax and zero errors across a substantial sample. This is rare.
+- Score STRICTLY from the EVIDENCE AVAILABLE. The amount of speech limits how high you can score:
+  * Very little speech (< 1 full sentence): cap every score at ~40 and use confidence "low".
+  * One or two short sentences: cap around 55-65.
+  * A short paragraph (3-5 sentences): cap around 70-80.
+  * A rich, multi-paragraph, well-structured sample: only then may scores exceed 85.
+- A native-sounding but SHORT or simple statement is NOT 100 — there isn't enough evidence. Reflect that with a lower score AND lower confidence.
+- Each sub-score (fluency, grammar, vocabulary, coherence) must be justified by a concrete observation in "feedback". If you cannot justify it, score it lower.
+- overallScore must be roughly the average of the sub-scores, not the maximum.
 
 Return ONLY valid JSON (no markdown):
 {
@@ -378,24 +394,104 @@ class VideoAnalysisService {
       return { assessable: false, languages: [] };
     }
 
+    // Server-side guard against score inflation: a credible high score needs a
+    // substantial speech sample. We cap scores by the amount of evidence so a
+    // short clip can never come back as a flat 100%.
+    const wordCount = transcription.trim().split(/\s+/).filter(Boolean).length;
+    const scoreCap = this.evidenceScoreCap(wordCount);
+    const clamp = (v) => Math.max(0, Math.min(scoreCap, Math.round(Number(v) || 0)));
+    const clampSub = (sub) =>
+      sub && typeof sub === 'object'
+        ? { ...sub, score: clamp(sub.score) }
+        : { score: 0, feedback: '' };
+
     const lookup = buildLanguageLookup(vocabLanguages);
     const languages = (parsed.languages || []).map((entry) => {
       const ref = entry?.language ? lookup.get(String(entry.language).toLowerCase()) : null;
+      const overallScore = clamp(entry.overallScore);
       return {
         ...(ref ? { language: { _id: ref.id, name: ref.name } } : { languageName: entry.language }),
-        cefr: entry.cefr || null,
-        overallScore: entry.overallScore || 0,
-        fluency: entry.fluency || { score: 0, feedback: '' },
-        grammar: entry.grammar || { score: 0, feedback: '' },
-        vocabulary: entry.vocabulary || { score: 0, feedback: '' },
-        coherence: entry.coherence || { score: 0, feedback: '' },
-        pronunciationEstimate: entry.pronunciationEstimate || { score: 0, confidence: 'low', feedback: '' },
+        cefr: this.scoreToCefr(overallScore, entry.cefr),
+        overallScore,
+        fluency: clampSub(entry.fluency),
+        grammar: clampSub(entry.grammar),
+        vocabulary: clampSub(entry.vocabulary),
+        coherence: clampSub(entry.coherence),
+        pronunciationEstimate: entry.pronunciationEstimate
+          ? { ...entry.pronunciationEstimate, score: clamp(entry.pronunciationEstimate.score), confidence: entry.pronunciationEstimate.confidence || 'low' }
+          : { score: 0, confidence: 'low', feedback: '' },
         strengths: entry.strengths || '',
         areasForImprovement: entry.areasForImprovement || '',
+        evidenceWords: wordCount,
       };
     });
 
     return { assessable: parsed.assessable !== false, languages };
+  }
+
+  // Maximum score allowed given how many words of evidence are available.
+  evidenceScoreCap(wordCount) {
+    if (wordCount >= 80) return 100;
+    if (wordCount >= 45) return 88;
+    if (wordCount >= 25) return 78;
+    if (wordCount >= 12) return 65;
+    if (wordCount >= 5) return 50;
+    return 35;
+  }
+
+  // Keep the CEFR band consistent with the (capped) overall score. We never
+  // upgrade above what the model claimed, but we downgrade if the score is low.
+  scoreToCefr(score, modelCefr) {
+    const order = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+    const fromScore =
+      score >= 90 ? 'C2' : score >= 78 ? 'C1' : score >= 65 ? 'B2' : score >= 50 ? 'B1' : score >= 35 ? 'A2' : 'A1';
+    if (!modelCefr || !order.includes(modelCefr)) return fromScore;
+    // Take the lower of the two so a capped score pulls the band down.
+    return order.indexOf(modelCefr) <= order.indexOf(fromScore) ? modelCefr : fromScore;
+  }
+
+  // Normalize the model's relevance block. Off-topic when the model says so OR
+  // when the relevance score is below the on-topic threshold.
+  normalizeRelevance(relevance) {
+    const score =
+      relevance && typeof relevance.score === 'number'
+        ? Math.max(0, Math.min(100, Math.round(relevance.score)))
+        : 100;
+    const onTopic = relevance?.onTopic !== false && score >= 40;
+    return {
+      onTopic,
+      score,
+      reason: relevance?.reason || (onTopic ? 'Speech matches the stated experience' : 'Speech does not match the stated experience'),
+    };
+  }
+
+  // Overwrite each spoken-language detection score with the nuanced, evidence-based
+  // overallScore (and CEFR) from the dedicated assessment, matched by id or name.
+  mergeAssessmentScores(spokenLanguages, languageAssessment) {
+    if (!Array.isArray(spokenLanguages) || spokenLanguages.length === 0) return spokenLanguages;
+    const assessed = languageAssessment?.languages || [];
+    if (assessed.length === 0) return spokenLanguages;
+
+    const byId = new Map();
+    const byName = new Map();
+    assessed.forEach((a) => {
+      const id = a.language?._id ? String(a.language._id) : null;
+      const name = (a.language?.name || a.languageName || '').toLowerCase();
+      if (id) byId.set(id, a);
+      if (name) byName.set(name, a);
+    });
+
+    return spokenLanguages.map((lang) => {
+      const id = lang.language?._id ? String(lang.language._id) : null;
+      const name = (lang.language?.name || '').toLowerCase();
+      const match = (id && byId.get(id)) || (name && byName.get(name));
+      if (!match) return lang;
+      return {
+        ...lang,
+        score: match.overallScore,
+        level: match.cefr || lang.level,
+      };
+    });
   }
 
   /**
@@ -527,6 +623,21 @@ class VideoAnalysisService {
         this.detectFacesAndFraud(upload.publicId, upload.duration),
       ]);
 
+      // The raw spokenLanguages score is only a detection confidence (≈100 for a
+      // native speaker). Replace it with the evidence-based assessment score so the
+      // UI bar reflects real proficiency instead of a flat 100%.
+      const spokenLanguages = this.mergeAssessmentScores(
+        this.resolveLanguageRefs(parsed.spokenLanguages, safeVocab.languages),
+        languageAssessment
+      );
+
+      // Relevance / off-topic guard. If the speech is not about the stated
+      // experience, we drop the extracted skills/industries/activities (we keep
+      // languages, since the spoken language is still real) and flag it so the
+      // profile aggregation can skip it.
+      const relevance = this.normalizeRelevance(parsed.relevance);
+      const onTopic = relevance.onTopic;
+
       // Enforce vocabulary server-side and persist ObjectId refs instead of names.
       return {
         videoUrl: upload.url,
@@ -534,24 +645,28 @@ class VideoAnalysisService {
         transcription,
         languageAssessment,
         fraudCheck,
+        relevance,
         analysis: {
-          technicalSkills: this.resolveNamedRefs(
-            parsed.technicalSkills,
-            safeVocab.technicalSkills,
-            'skill'
-          ),
-          professionalSkills: this.resolveNamedRefs(
-            parsed.professionalSkills,
-            safeVocab.professionalSkills,
-            'skill'
-          ),
-          softSkills: this.resolveNamedRefs(parsed.softSkills, safeVocab.softSkills, 'skill'),
-          spokenLanguages: this.resolveLanguageRefs(parsed.spokenLanguages, safeVocab.languages),
-          industries: this.resolveNamedRefs(parsed.industries, safeVocab.industries, 'industry'),
-          activities: this.resolveNamedRefs(parsed.activities, safeVocab.activities, 'activity'),
-          contactCenterSkills: parsed.contactCenterSkills || {},
+          technicalSkills: onTopic
+            ? this.resolveNamedRefs(parsed.technicalSkills, safeVocab.technicalSkills, 'skill')
+            : [],
+          professionalSkills: onTopic
+            ? this.resolveNamedRefs(parsed.professionalSkills, safeVocab.professionalSkills, 'skill')
+            : [],
+          softSkills: onTopic
+            ? this.resolveNamedRefs(parsed.softSkills, safeVocab.softSkills, 'skill')
+            : [],
+          spokenLanguages,
+          industries: onTopic
+            ? this.resolveNamedRefs(parsed.industries, safeVocab.industries, 'industry')
+            : [],
+          activities: onTopic
+            ? this.resolveNamedRefs(parsed.activities, safeVocab.activities, 'activity')
+            : [],
+          contactCenterSkills: onTopic ? parsed.contactCenterSkills || {} : {},
           overallConfidence: parsed.overallConfidence || 0,
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',
+          relevance,
           summary: parsed.summary || '',
         },
         provider: 'openai',

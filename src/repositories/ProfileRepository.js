@@ -77,8 +77,12 @@ class ProfileRepository {
       videoAnalysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
       videoLanguageAssessment: this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
       videoFraudCheck: payload.fraudCheck || {},
+      videoRelevance: payload.relevance || {},
       videoAnalyzedAt: new Date(),
     };
+
+    // Off-topic videos must NOT enrich the profile with skills/languages.
+    const onTopic = payload.relevance ? payload.relevance.onTopic !== false : true;
 
     // Build the profile filter (_id when valid, otherwise userId).
     const filter = mongoose.isValidObjectId(profileId)
@@ -94,7 +98,7 @@ class ProfileRepository {
       });
       const res = await Agent.updateOne(filter, { $set: set });
       if (res.matchedCount > 0) {
-        await this.applyVideoInsights(filter);
+        if (onTopic) await this.applyVideoInsights(filter);
         return true;
       }
     }
@@ -109,7 +113,7 @@ class ProfileRepository {
       if (context.company) arrayFilter['e.company'] = context.company;
       const res = await Agent.updateOne(filter, { $set: set }, { arrayFilters: [arrayFilter] });
       if (res.matchedCount > 0) {
-        await this.applyVideoInsights(filter);
+        if (onTopic) await this.applyVideoInsights(filter);
         return true;
       }
     }
