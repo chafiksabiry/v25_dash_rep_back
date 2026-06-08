@@ -128,7 +128,7 @@ const aggregateFromExperiences = (experiences) => {
 
     (va.spokenLanguages || []).forEach((entry) => {
       if (!entry || !entry.language) return;
-      const id = String(entry.language);
+      const id = String(entry.language._id || entry.language);
       const prof = normalizeProficiency(entry.level, entry.score);
       if (!prof) return;
 
@@ -149,7 +149,7 @@ const aggregateFromExperiences = (experiences) => {
     const collectSkills = (items, type) => {
       (items || []).forEach((entry) => {
         if (!entry || !entry.skill) return;
-        const id = String(entry.skill);
+        const id = String(entry.skill._id || entry.skill);
         const level = scoreToLevel(entry.score);
         const current = skillMaps[type].get(id);
         skillMaps[type].set(id, current ? Math.max(current, level) : level);
@@ -161,10 +161,10 @@ const aggregateFromExperiences = (experiences) => {
     collectSkills(va.softSkills, 'soft');
 
     (va.industries || []).forEach((entry) => {
-      if (entry && entry.industry) industryIds.add(String(entry.industry));
+      if (entry && entry.industry) industryIds.add(String(entry.industry._id || entry.industry));
     });
     (va.activities || []).forEach((entry) => {
-      if (entry && entry.activity) activityIds.add(String(entry.activity));
+      if (entry && entry.activity) activityIds.add(String(entry.activity._id || entry.activity));
     });
   });
 

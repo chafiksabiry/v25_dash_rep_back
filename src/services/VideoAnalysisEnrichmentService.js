@@ -12,6 +12,8 @@ const toId = (value) => {
   return String(value);
 };
 
+const toMap = (docs) => new Map((docs || []).map((d) => [String(d._id), d.name]));
+
 class VideoAnalysisEnrichmentService {
   async loadNameMaps() {
     const [technical, professional, soft, industries, activities, languages] = await Promise.all([
@@ -22,8 +24,6 @@ class VideoAnalysisEnrichmentService {
       Activity.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
       Language.find({}, { name: 1 }).lean(),
     ]);
-
-    const toMap = (docs) => new Map(docs.map((d) => [String(d._id), d.name]));
 
     return {
       skill: new Map([...toMap(technical), ...toMap(professional), ...toMap(soft)]),
@@ -36,22 +36,24 @@ class VideoAnalysisEnrichmentService {
   enrichAnalysis(analysis, maps) {
     if (!analysis || typeof analysis !== 'object') return analysis;
 
-    const addName = (items, idField) =>
+    const populateRef = (items, idField, mapKey) =>
       (Array.isArray(items) ? items : []).map((item) => {
         if (!item) return item;
+        if (typeof item[idField] === 'object' && item[idField]?.name) return item;
         const id = toId(item[idField]);
-        const name = id ? maps[idField === 'language' ? 'language' : idField]?.get(id) : null;
-        return name ? { ...item, name } : item;
+        const name = id ? maps[mapKey]?.get(id) : null;
+        if (!name) return item;
+        return { ...item, [idField]: { _id: id, name } };
       });
 
     return {
       ...analysis,
-      technicalSkills: addName(analysis.technicalSkills, 'skill'),
-      professionalSkills: addName(analysis.professionalSkills, 'skill'),
-      softSkills: addName(analysis.softSkills, 'skill'),
-      spokenLanguages: addName(analysis.spokenLanguages, 'language'),
-      industries: addName(analysis.industries, 'industry'),
-      activities: addName(analysis.activities, 'activity'),
+      technicalSkills: populateRef(analysis.technicalSkills, 'skill', 'skill'),
+      professionalSkills: populateRef(analysis.professionalSkills, 'skill', 'skill'),
+      softSkills: populateRef(analysis.softSkills, 'skill', 'skill'),
+      spokenLanguages: populateRef(analysis.spokenLanguages, 'language', 'language'),
+      industries: populateRef(analysis.industries, 'industry', 'industry'),
+      activities: populateRef(analysis.activities, 'activity', 'activity'),
     };
   }
 
@@ -60,19 +62,9 @@ class VideoAnalysisEnrichmentService {
     if (mongoose.connection.readyState !== 1) return experiences;
 
     const maps = await this.loadNameMaps();
-    const skillMaps = {
-      skill: maps.skill,
-      industry: maps.industry,
-      activity: maps.activity,
-      language: maps.language,
-    };
-
     return experiences.map((exp) => {
       if (!exp?.videoAnalysis) return exp;
-      return {
-        ...exp,
-        videoAnalysis: this.enrichAnalysis(exp.videoAnalysis, skillMaps),
-      };
+      return { ...exp, videoAnalysis: this.enrichAnalysis(exp.videoAnalysis, maps) };
     });
   }
 }

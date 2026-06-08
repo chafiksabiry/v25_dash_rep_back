@@ -191,8 +191,8 @@ class VideoAnalysisService {
     return typeof response === 'string' ? response.trim() : String(response).trim();
   }
 
-  // Resolves AI item names to vocabulary entries. The returned objects carry both
-  // the ObjectId ref (persisted) and the display `name` (used by the UI only).
+  // Resolves AI names to populated refs { _id, name } so the UI can render labels
+  // the same way as other populated profile fields (e.g. personalInfo.languages).
   resolveNamedRefs(items, vocabItems, idField) {
     if (!Array.isArray(items)) return [];
     const lookup = buildLookup(vocabItems);
@@ -203,8 +203,7 @@ class VideoAnalysisService {
       .map((item) => {
         const entry = lookup.get(String(item.name).toLowerCase());
         return {
-          [idField]: entry.id,
-          name: entry.name,
+          [idField]: { _id: entry.id, name: entry.name },
           score: item.score,
           ...(item.evidence !== undefined ? { evidence: item.evidence } : {}),
         };
@@ -221,8 +220,7 @@ class VideoAnalysisService {
       .map((item) => {
         const entry = lookup.get(String(item.language).toLowerCase());
         return {
-          language: entry.id,
-          name: entry.name,
+          language: { _id: entry.id, name: entry.name },
           level: item.level,
           score: item.score,
           ...(item.evidence !== undefined ? { evidence: item.evidence } : {}),

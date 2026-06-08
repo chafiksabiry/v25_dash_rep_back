@@ -25,19 +25,28 @@ class ProfileRepository {
   sanitizeAnalysisForStorage(analysis) {
     if (!analysis || typeof analysis !== 'object') return analysis;
 
-    const stripNames = (items) =>
+    const toObjectId = (value) => {
+      if (!value) return value;
+      if (typeof value === 'object' && value._id) return value._id;
+      return value;
+    };
+
+    const stripForStorage = (items, refField) =>
       Array.isArray(items)
-        ? items.map(({ name, ...rest }) => rest)
+        ? items.map(({ name, ...rest }) => ({
+            ...rest,
+            [refField]: toObjectId(rest[refField]),
+          }))
         : items;
 
     return {
       ...analysis,
-      technicalSkills: stripNames(analysis.technicalSkills),
-      professionalSkills: stripNames(analysis.professionalSkills),
-      softSkills: stripNames(analysis.softSkills),
-      spokenLanguages: stripNames(analysis.spokenLanguages),
-      industries: stripNames(analysis.industries),
-      activities: stripNames(analysis.activities),
+      technicalSkills: stripForStorage(analysis.technicalSkills, 'skill'),
+      professionalSkills: stripForStorage(analysis.professionalSkills, 'skill'),
+      softSkills: stripForStorage(analysis.softSkills, 'skill'),
+      spokenLanguages: stripForStorage(analysis.spokenLanguages, 'language'),
+      industries: stripForStorage(analysis.industries, 'industry'),
+      activities: stripForStorage(analysis.activities, 'activity'),
     };
   }
 
