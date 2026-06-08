@@ -22,14 +22,16 @@ class ProfileRepository {
    * Strip display-only `name` fields from the resolved vocabulary refs so the
    * persisted analysis keeps ObjectId references only (UI receives names separately).
    */
+  static toObjectIdRef(value) {
+    if (!value) return value;
+    if (typeof value === 'object' && value._id) return value._id;
+    return value;
+  }
+
   sanitizeAnalysisForStorage(analysis) {
     if (!analysis || typeof analysis !== 'object') return analysis;
 
-    const toObjectId = (value) => {
-      if (!value) return value;
-      if (typeof value === 'object' && value._id) return value._id;
-      return value;
-    };
+    const toObjectId = ProfileRepository.toObjectIdRef;
 
     const stripForStorage = (items, refField) =>
       Array.isArray(items)
@@ -50,11 +52,31 @@ class ProfileRepository {
     };
   }
 
+  // Keep language ObjectId refs only when persisting the detailed assessment.
+  sanitizeLanguageAssessmentForStorage(languageAssessment) {
+    if (!languageAssessment || typeof languageAssessment !== 'object') return languageAssessment;
+
+    const languages = Array.isArray(languageAssessment.languages)
+      ? languageAssessment.languages.map((entry) => {
+          if (entry?.language) {
+            const { ...rest } = entry;
+            return { ...rest, language: ProfileRepository.toObjectIdRef(entry.language) };
+          }
+          return entry;
+        })
+      : [];
+
+    return { ...languageAssessment, languages };
+  }
+
   async saveExperienceVideoAnalysis(profileId, experienceIndex, payload, context = {}) {
     const fields = {
       videoUrl: payload.videoUrl || null,
+      videoDuration: payload.duration || null,
       videoTranscription: payload.transcription || '',
       videoAnalysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
+      videoLanguageAssessment: this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
+      videoFraudCheck: payload.fraudCheck || {},
       videoAnalyzedAt: new Date(),
     };
 

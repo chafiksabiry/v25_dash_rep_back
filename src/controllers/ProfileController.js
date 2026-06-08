@@ -511,6 +511,15 @@ class ProfileController {
 
       res.json({ data: { ...result, saved } });
     } catch (error) {
+      // Typed validation errors (e.g. video too short) → 400 with a clear code.
+      if (error?.name === 'VideoValidationError') {
+        logger.warn(`Video validation failed for profile ${req.params.id}: ${error.message}`);
+        return res.status(400).json({
+          message: error.message,
+          code: error.code,
+          details: error.details || {},
+        });
+      }
       logger.error(`Error in analyzeExperienceVideo controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Video analysis failed', error: error.message });
     }
