@@ -70,7 +70,12 @@ TRANSCRIPT:
 "${transcription || '[No speech detected — infer conservatively from the provided context only]'}"
 
 TONE & LANGUAGE — VERY IMPORTANT:
-- Address the candidate DIRECTLY in the second person (English "You ...", French polite "Vous ...").
+- Address the candidate DIRECTLY in the second person, as if you were talking to them (English "You ...", French polite "Vous ...").
+- NEVER write in the third person about "the transcript", "the video", "the candidate", "the speaker", "the individual" or "the person". Speak TO them.
+  * BAD: "The transcript does not provide relevant information about the role."
+  * GOOD (en): "You didn't really describe your role at the company — try telling us what you did day to day, the tools you used and what you achieved."
+  * GOOD (fr): "Vous n'avez pas vraiment décrit votre poste — essayez de nous expliquer ce que vous faisiez au quotidien, les outils utilisés et vos réalisations."
+- When information is missing or off-topic, say it directly and helpfully to the person (what to do next), still in the second person.
 - Every free-text field (evidence, notes, summary, reason) MUST be a bilingual object: { "en": "English text", "fr": "texte français" }.
 - The French text must use the polite "vous" form. Keep both versions equivalent in meaning.
 
@@ -117,8 +122,8 @@ Every "evidence", "notes", "reason" and "summary" field MUST be a bilingual obje
   },
   "overallConfidence": 0-100,
   "detectedLanguageOfSpeech": "string",
-  "relevance": { "onTopic": true, "score": 0-100, "reason": { "en": "why it is or is not about the stated experience", "fr": "pourquoi cela concerne ou non l'expérience indiquée" } },
-  "summary": { "en": "2-3 sentence professional summary addressing you directly", "fr": "résumé professionnel de 2-3 phrases vous concernant directement" }
+  "relevance": { "onTopic": true, "score": 0-100, "reason": { "en": "speak to the person: e.g. 'You spoke about ...' or 'You didn't talk about your role ...'", "fr": "parlez à la personne : ex. « Vous avez parlé de ... » ou « Vous n'avez pas décrit votre poste ... »" } },
+  "summary": { "en": "2-3 sentences spoken DIRECTLY to the person using 'You ...' (never 'The transcript/candidate ...')", "fr": "2-3 phrases adressées DIRECTEMENT à la personne avec « Vous ... » (jamais « La transcription/le candidat ... »)" }
 }
 
 Scoring rules:
