@@ -4,9 +4,19 @@ const ProfessionalSkill = require('../models/ProfessionalSkill');
 const SoftSkill = require('../models/SoftSkill');
 const Industry = require('../models/Industry');
 const Activity = require('../models/Activity');
+const Language = require('../models/Language');
 const logger = require('../utils/logger');
 
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+const emptyVocabulary = () => ({
+  technicalSkills: [],
+  professionalSkills: [],
+  softSkills: [],
+  industries: [],
+  activities: [],
+  languages: [],
+});
 
 class VocabularyService {
   constructor() {
@@ -14,13 +24,19 @@ class VocabularyService {
     this._cachedAt = 0;
   }
 
-  async _names(Model) {
-    const docs = await Model.find({ isActive: { $ne: false } }, { name: 1 }).lean();
-    return docs.map((d) => d.name).filter(Boolean);
+  async _items(Model, fields = { name: 1 }) {
+    const docs = await Model.find({ isActive: { $ne: false } }, fields).lean();
+    return docs
+      .filter((doc) => doc.name)
+      .map((doc) => ({
+        id: doc._id,
+        name: doc.name,
+        ...(doc.code ? { code: doc.code } : {}),
+      }));
   }
 
   /**
-   * Load the platform vocabularies directly from the shared MongoDB collections.
+   * Load platform vocabularies with both ObjectId and display name.
    * Returns empty arrays if the DB is unavailable so analysis can still proceed.
    */
   async getVocabulary() {
@@ -31,29 +47,32 @@ class VocabularyService {
 
     if (mongoose.connection.readyState !== 1) {
       logger.warn('Vocabulary requested but MongoDB is not connected — returning empty lists');
-      return {
-        technicalSkills: [],
-        professionalSkills: [],
-        softSkills: [],
-        industries: [],
-        activities: [],
-      };
+      return emptyVocabulary();
     }
 
-    const [technicalSkills, professionalSkills, softSkills, industries, activities] = await Promise.all([
-      this._names(TechnicalSkill),
-      this._names(ProfessionalSkill),
-      this._names(SoftSkill),
-      this._names(Industry),
-      this._names(Activity),
-    ]);
+    const [technicalSkills, professionalSkills, softSkills, industries, activities, languages] =
+      await Promise.all([
+        this._items(TechnicalSkill),
+        this._items(ProfessionalSkill),
+        this._items(SoftSkill),
+        this._items(Industry),
+        this._items(Activity),
+        this._items(Language, { name: 1, code: 1 }),
+      ]);
 
-    this._cache = { technicalSkills, professionalSkills, softSkills, industries, activities };
+    this._cache = {
+      technicalSkills,
+      professionalSkills,
+      softSkills,
+      industries,
+      activities,
+      languages,
+    };
     this._cachedAt = now;
 
     logger.info(
       `Loaded vocabulary from DB: tech=${technicalSkills.length}, prof=${professionalSkills.length}, ` +
-        `soft=${softSkills.length}, ind=${industries.length}, act=${activities.length}`
+        `soft=${softSkills.length}, ind=${industries.length}, act=${activities.length}, lang=${languages.length}`
     );
 
     return this._cache;

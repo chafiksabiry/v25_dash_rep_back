@@ -12,11 +12,41 @@ const MAX_VIDEO_BYTES = 1000 * 1024 * 1024;
 // Limite réelle de l'API Whisper (fichier audio envoyé).
 const WHISPER_MAX_BYTES = 50 * 1024 * 1024;
 
-const renderAllowedList = (label, names) => {
-  if (!Array.isArray(names) || names.length === 0) {
+const vocabNames = (items) =>
+  (Array.isArray(items) ? items : []).map((item) => (typeof item === 'string' ? item : item?.name)).filter(Boolean);
+
+const renderAllowedList = (label, items) => {
+  const names = vocabNames(items);
+  if (names.length === 0) {
     return `${label}: (no predefined list provided — return an empty array for this field)`;
   }
   return `${label} (choose ONLY from these exact names, copy them verbatim):\n${names.map((n) => `- ${n}`).join('\n')}`;
+};
+
+const buildLookup = (items) => {
+  const byLower = new Map();
+  if (!Array.isArray(items)) return byLower;
+
+  items.forEach((item) => {
+    if (!item?.id || !item?.name) return;
+    byLower.set(String(item.name).toLowerCase(), { id: item.id, name: item.name });
+  });
+
+  return byLower;
+};
+
+const buildLanguageLookup = (items) => {
+  const byLower = new Map();
+  if (!Array.isArray(items)) return byLower;
+
+  items.forEach((item) => {
+    if (!item?.id) return;
+    const entry = { id: item.id, name: item.name };
+    if (item.name) byLower.set(String(item.name).toLowerCase(), entry);
+    if (item.code) byLower.set(String(item.code).toLowerCase(), entry);
+  });
+
+  return byLower;
 };
 
 const buildAnalysisPrompt = (contextStr, transcription, vocab) => `You are an expert HR analyst and skills assessor. ${contextStr}
@@ -161,14 +191,43 @@ class VideoAnalysisService {
     return typeof response === 'string' ? response.trim() : String(response).trim();
   }
 
-  // Keep only AI items whose name is in the allowed list (exact, case-insensitive).
-  filterToAllowed(items, allowedNames) {
+  // Resolves AI item names to vocabulary entries. The returned objects carry both
+  // the ObjectId ref (persisted) and the display `name` (used by the UI only).
+  resolveNamedRefs(items, vocabItems, idField) {
     if (!Array.isArray(items)) return [];
-    if (!Array.isArray(allowedNames) || allowedNames.length === 0) return [];
-    const allowedByLower = new Map(allowedNames.map((n) => [String(n).toLowerCase(), String(n)]));
+    const lookup = buildLookup(vocabItems);
+    if (lookup.size === 0) return [];
+
     return items
-      .filter((item) => item && item.name && allowedByLower.has(String(item.name).toLowerCase()))
-      .map((item) => ({ ...item, name: allowedByLower.get(String(item.name).toLowerCase()) }));
+      .filter((item) => item?.name && lookup.has(String(item.name).toLowerCase()))
+      .map((item) => {
+        const entry = lookup.get(String(item.name).toLowerCase());
+        return {
+          [idField]: entry.id,
+          name: entry.name,
+          score: item.score,
+          ...(item.evidence !== undefined ? { evidence: item.evidence } : {}),
+        };
+      });
+  }
+
+  resolveLanguageRefs(items, vocabItems) {
+    if (!Array.isArray(items)) return [];
+    const lookup = buildLanguageLookup(vocabItems);
+    if (lookup.size === 0) return [];
+
+    return items
+      .filter((item) => item?.language && lookup.has(String(item.language).toLowerCase()))
+      .map((item) => {
+        const entry = lookup.get(String(item.language).toLowerCase());
+        return {
+          language: entry.id,
+          name: entry.name,
+          level: item.level,
+          score: item.score,
+          ...(item.evidence !== undefined ? { evidence: item.evidence } : {}),
+        };
+      });
   }
 
   async analyzeTranscript(transcription, experienceContext, vocab) {
@@ -216,6 +275,7 @@ class VideoAnalysisService {
         softSkills: [],
         industries: [],
         activities: [],
+        languages: [],
       };
     }
 
@@ -248,17 +308,25 @@ class VideoAnalysisService {
       console.log('Analyzing transcript with GPT-4o (constrained to DB vocabulary)...');
       const parsed = await this.analyzeTranscript(transcription, experienceContext, safeVocab);
 
-      // Enforce the vocabulary server-side as a safety net against the model drifting.
+      // Enforce vocabulary server-side and persist ObjectId refs instead of names.
       return {
         videoUrl: upload.url,
         transcription,
         analysis: {
-          technicalSkills: this.filterToAllowed(parsed.technicalSkills, safeVocab.technicalSkills),
-          professionalSkills: this.filterToAllowed(parsed.professionalSkills, safeVocab.professionalSkills),
-          softSkills: this.filterToAllowed(parsed.softSkills, safeVocab.softSkills),
-          spokenLanguages: parsed.spokenLanguages || [],
-          industries: this.filterToAllowed(parsed.industries, safeVocab.industries),
-          activities: this.filterToAllowed(parsed.activities, safeVocab.activities),
+          technicalSkills: this.resolveNamedRefs(
+            parsed.technicalSkills,
+            safeVocab.technicalSkills,
+            'skill'
+          ),
+          professionalSkills: this.resolveNamedRefs(
+            parsed.professionalSkills,
+            safeVocab.professionalSkills,
+            'skill'
+          ),
+          softSkills: this.resolveNamedRefs(parsed.softSkills, safeVocab.softSkills, 'skill'),
+          spokenLanguages: this.resolveLanguageRefs(parsed.spokenLanguages, safeVocab.languages),
+          industries: this.resolveNamedRefs(parsed.industries, safeVocab.industries, 'industry'),
+          activities: this.resolveNamedRefs(parsed.activities, safeVocab.activities, 'activity'),
           contactCenterSkills: parsed.contactCenterSkills || {},
           overallConfidence: parsed.overallConfidence || 0,
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',

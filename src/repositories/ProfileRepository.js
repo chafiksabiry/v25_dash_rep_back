@@ -13,11 +13,34 @@ class ProfileRepository {
    * experience entry by array index (falling back to title/company match).
    * Returns true if a document was modified.
    */
+  /**
+   * Strip display-only `name` fields from the resolved vocabulary refs so the
+   * persisted analysis keeps ObjectId references only (UI receives names separately).
+   */
+  sanitizeAnalysisForStorage(analysis) {
+    if (!analysis || typeof analysis !== 'object') return analysis;
+
+    const stripNames = (items) =>
+      Array.isArray(items)
+        ? items.map(({ name, ...rest }) => rest)
+        : items;
+
+    return {
+      ...analysis,
+      technicalSkills: stripNames(analysis.technicalSkills),
+      professionalSkills: stripNames(analysis.professionalSkills),
+      softSkills: stripNames(analysis.softSkills),
+      spokenLanguages: stripNames(analysis.spokenLanguages),
+      industries: stripNames(analysis.industries),
+      activities: stripNames(analysis.activities),
+    };
+  }
+
   async saveExperienceVideoAnalysis(profileId, experienceIndex, payload, context = {}) {
     const fields = {
       videoUrl: payload.videoUrl || null,
       videoTranscription: payload.transcription || '',
-      videoAnalysis: payload.analysis || {},
+      videoAnalysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
       videoAnalyzedAt: new Date(),
     };
 
