@@ -77,8 +77,8 @@ TONE & LANGUAGE — VERY IMPORTANT:
 RELEVANCE / OFF-TOPIC CHECK — VERY IMPORTANT:
 - The speaker is supposed to describe the SPECIFIC professional experience given in the context above.
 - Judge from the TRANSCRIPT whether the speech is actually ABOUT that role/company and professional experience in general.
-- If the transcript is unrelated (random talk, testing the mic, a different unrelated topic, jokes, silence, advertising, reading something off-topic, etc.), it is OFF-TOPIC.
-- When OFF-TOPIC: set "relevance.onTopic" to false, give a low "relevance.score", and DO NOT extract skills/industries/activities from unrelated content (return empty arrays for them). Only assess spokenLanguages from whatever is actually spoken.
+- If the transcript is clearly unrelated (random talk, testing the mic, a totally different topic, jokes, silence, advertising, reading something off-topic, etc.), set "relevance.onTopic" to false and give a low "relevance.score". Otherwise set it to true.
+- IMPORTANT: This relevance flag is INFORMATIONAL only. ALWAYS extract every skill, industry and activity that is genuinely evidenced in the transcript, EVEN IF you judged the video off-topic. Do NOT return empty arrays just because relevance is low — only return empty when there is truly no matching evidence.
 
 STRICT VOCABULARY RULES — VERY IMPORTANT:
 - For technicalSkills, professionalSkills, softSkills, industries and activities you MUST ONLY use names taken EXACTLY from the predefined lists below.
@@ -647,12 +647,26 @@ class VideoAnalysisService {
         languageAssessment
       );
 
-      // Relevance / off-topic guard. If the speech is not about the stated
-      // experience, we drop the extracted skills/industries/activities (we keep
-      // languages, since the spoken language is still real) and flag it so the
-      // profile aggregation can skip it.
+      // Relevance is now informational only: we ALWAYS extract whatever skills are
+      // genuinely evidenced, and keep the relevance flag just to warn the user when
+      // the speech does not clearly match the stated experience.
       const relevance = this.normalizeRelevance(parsed.relevance);
-      const onTopic = relevance.onTopic;
+
+      const technicalSkills = this.resolveNamedRefs(parsed.technicalSkills, safeVocab.technicalSkills, 'skill');
+      const professionalSkills = this.resolveNamedRefs(parsed.professionalSkills, safeVocab.professionalSkills, 'skill');
+      const softSkills = this.resolveNamedRefs(parsed.softSkills, safeVocab.softSkills, 'skill');
+      const industries = this.resolveNamedRefs(parsed.industries, safeVocab.industries, 'industry');
+      const activities = this.resolveNamedRefs(parsed.activities, safeVocab.activities, 'activity');
+
+      // Diagnostic: surface the relevance decision + evidence so off-topic/empty
+      // results are easy to explain from the logs.
+      console.log(
+        `Analysis decision for "${experienceContext.title || 'experience'}": ` +
+          `onTopic=${relevance.onTopic}, relevanceScore=${relevance.score}, confidence=${parsed.overallConfidence || 0}, ` +
+          `tech=${technicalSkills.length}, prof=${professionalSkills.length}, soft=${softSkills.length}, ` +
+          `ind=${industries.length}, act=${activities.length}, langs=${spokenLanguages.length}, ` +
+          `transcriptChars=${(transcription || '').length}`
+      );
 
       // Enforce vocabulary server-side and persist ObjectId refs instead of names.
       return {
@@ -663,23 +677,13 @@ class VideoAnalysisService {
         fraudCheck,
         relevance,
         analysis: {
-          technicalSkills: onTopic
-            ? this.resolveNamedRefs(parsed.technicalSkills, safeVocab.technicalSkills, 'skill')
-            : [],
-          professionalSkills: onTopic
-            ? this.resolveNamedRefs(parsed.professionalSkills, safeVocab.professionalSkills, 'skill')
-            : [],
-          softSkills: onTopic
-            ? this.resolveNamedRefs(parsed.softSkills, safeVocab.softSkills, 'skill')
-            : [],
+          technicalSkills,
+          professionalSkills,
+          softSkills,
           spokenLanguages,
-          industries: onTopic
-            ? this.resolveNamedRefs(parsed.industries, safeVocab.industries, 'industry')
-            : [],
-          activities: onTopic
-            ? this.resolveNamedRefs(parsed.activities, safeVocab.activities, 'activity')
-            : [],
-          contactCenterSkills: onTopic ? parsed.contactCenterSkills || {} : {},
+          industries,
+          activities,
+          contactCenterSkills: parsed.contactCenterSkills || {},
           overallConfidence: parsed.overallConfidence || 0,
           detectedLanguageOfSpeech: parsed.detectedLanguageOfSpeech || '',
           relevance,
