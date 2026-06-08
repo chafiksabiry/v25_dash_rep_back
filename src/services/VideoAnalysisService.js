@@ -1,11 +1,16 @@
 const OpenAI = require('openai');
 const cloudinary = require('cloudinary').v2;
+const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const VocabularyService = require('./VocabularyService');
 
-const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
+// Garde-fou sur l'upload (mémoire). Whisper ne reçoit plus la vidéo mais l'audio
+// extrait (mp3) — bien plus léger — donc la limite de 25 Mo de Whisper ne s'applique plus.
+const MAX_VIDEO_BYTES = 1000 * 1024 * 1024;
+// Limite réelle de l'API Whisper (fichier audio envoyé).
+const WHISPER_MAX_BYTES = 50 * 1024 * 1024;
 
 const renderAllowedList = (label, names) => {
   if (!Array.isArray(names) || names.length === 0) {
@@ -119,10 +124,32 @@ class VideoAnalysisService {
           if (!result?.secure_url) {
             return reject(new Error('Cloudinary upload returned no URL'));
           }
-          resolve(result.secure_url);
+          resolve({ url: result.secure_url, publicId: result.public_id });
         }
       );
     });
+  }
+
+  /**
+   * URL Cloudinary de l'audio (mp3 mono 64kbps) extrait de la vidéo.
+   * Bien plus léger que la vidéo → respecte la limite de 25 Mo de Whisper.
+   */
+  buildAudioUrl(publicId) {
+    return cloudinary.url(publicId, {
+      resource_type: 'video',
+      format: 'mp3',
+      audio_frequency: 16000,
+      audio_codec: 'mp3',
+      bit_rate: '64k',
+    });
+  }
+
+  /** Télécharge une URL vers un fichier temporaire et retourne son chemin. */
+  async downloadToTemp(url, ext) {
+    const tmpPath = path.join(os.tmpdir(), `exp-audio-${Date.now()}.${ext}`);
+    const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 60000 });
+    fs.writeFileSync(tmpPath, Buffer.from(response.data));
+    return tmpPath;
   }
 
   async transcribeAudio(filePath) {
@@ -194,22 +221,36 @@ class VideoAnalysisService {
 
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
+    let audioTmpPath = null;
 
     try {
       fs.writeFileSync(tmpPath, videoBuffer);
 
       console.log(`Uploading video to Cloudinary (${Math.round(videoBuffer.length / 1024)}KB)...`);
-      const videoUrl = await this.uploadToCloudinary(tmpPath);
+      const upload = await this.uploadToCloudinary(tmpPath);
+
+      // On extrait un mp3 léger depuis la vidéo uploadée : Whisper ne reçoit jamais
+      // la vidéo complète (potentiellement > 25 Mo), seulement l'audio.
+      console.log('Extracting audio (mp3) from Cloudinary...');
+      const audioUrl = this.buildAudioUrl(upload.publicId);
+      audioTmpPath = await this.downloadToTemp(audioUrl, 'mp3');
+
+      const audioBytes = fs.statSync(audioTmpPath).size;
+      if (audioBytes > WHISPER_MAX_BYTES) {
+        throw new Error(
+          `Extracted audio is too large for transcription (${Math.round(audioBytes / 1024 / 1024)}MB). Maximum is ${Math.round(WHISPER_MAX_BYTES / 1024 / 1024)}MB.`
+        );
+      }
 
       console.log('Transcribing audio with Whisper...');
-      const transcription = await this.transcribeAudio(tmpPath);
+      const transcription = await this.transcribeAudio(audioTmpPath);
 
       console.log('Analyzing transcript with GPT-4o (constrained to DB vocabulary)...');
       const parsed = await this.analyzeTranscript(transcription, experienceContext, safeVocab);
 
       // Enforce the vocabulary server-side as a safety net against the model drifting.
       return {
-        videoUrl,
+        videoUrl: upload.url,
         transcription,
         analysis: {
           technicalSkills: this.filterToAllowed(parsed.technicalSkills, safeVocab.technicalSkills),
@@ -228,6 +269,9 @@ class VideoAnalysisService {
     } finally {
       if (fs.existsSync(tmpPath)) {
         fs.unlinkSync(tmpPath);
+      }
+      if (audioTmpPath && fs.existsSync(audioTmpPath)) {
+        fs.unlinkSync(audioTmpPath);
       }
     }
   }
