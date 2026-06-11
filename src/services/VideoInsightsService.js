@@ -79,6 +79,7 @@ const buildVideoAssessmentResults = (score, proficiency, evidence) => {
       strengths: proficiency ? `CEFR ${proficiency} demonstrated in experience video` : 'Demonstrated in experience video',
       areasForImprovement: '',
     },
+    source: 'video',
     completedAt: new Date(),
   };
 };
@@ -113,6 +114,7 @@ const mergeAssessmentResults = (existing, incoming) => {
         : existing.overall?.strengths,
       areasForImprovement: existing.overall?.areasForImprovement || incoming.overall?.areasForImprovement || '',
     },
+    source: incoming.source || existing.source || 'video',
     completedAt: incoming.completedAt || existing.completedAt,
   };
 };
@@ -205,8 +207,19 @@ const buildProfileUpdate = (agent, insights) => {
     const existing = languageById.get(id);
 
     if (existing) {
-      existing.proficiency = maxProficiency(existing.proficiency || 'A1', data.proficiency);
-      existing.assessmentResults = mergeAssessmentResults(existing.assessmentResults, videoAssessment);
+      const existingVerified = existing.assessmentResults && existing.assessmentResults.source === 'video';
+      if (existingVerified) {
+        // Already verified by a previous video: keep the strongest measurement
+        // across genuine video assessments (never downgrade a real result).
+        existing.proficiency = maxProficiency(existing.proficiency || 'A1', data.proficiency);
+        existing.assessmentResults = mergeAssessmentResults(existing.assessmentResults, videoAssessment);
+      } else {
+        // Existing level was only a CV estimate (or unset). The measured video
+        // assessment is authoritative and OVERRIDES it — even if it's lower
+        // (e.g. CV claimed C2 but the video demonstrates C1).
+        existing.proficiency = data.proficiency;
+        existing.assessmentResults = videoAssessment;
+      }
     } else {
       languageById.set(id, {
         language: objectId,
