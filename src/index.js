@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const path = require('path');
 const mongoose = require('mongoose');
 const profileRoutes = require('./routes/profileRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
@@ -57,6 +58,7 @@ app.use(requestLogger);
 
 // Routes
 app.use('/api/profiles', profileRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
