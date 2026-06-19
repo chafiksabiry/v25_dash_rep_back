@@ -12,7 +12,7 @@ const MAX_VIDEO_BYTES = 1000 * 1024 * 1024;
 // Limite réelle de l'API Whisper (fichier audio envoyé).
 const WHISPER_MAX_BYTES = 50 * 1024 * 1024;
 // Durée minimale pour une vidéo de vérification linguistique dédiée (onglet Langues).
-const MIN_LANGUAGE_VIDEO_SECONDS = 15;
+const MIN_LANGUAGE_VIDEO_SECONDS = 90; // 1 min 30
 // Durée minimale exigée pour qu'une vidéo d'expérience soit analysable.
 const MIN_DURATION_SECONDS = 30;
 
@@ -580,8 +580,8 @@ class VideoAnalysisService {
           matches: false,
           detectedLanguage: '',
           reason: {
-            en: 'You did not speak enough for us to verify this language. Please record again and speak clearly for at least 15 seconds.',
-            fr: 'Vous n’avez pas assez parlé pour que nous puissions vérifier cette langue. Réenregistrez et parlez clairement pendant au moins 15 secondes.',
+            en: 'You did not speak enough for us to verify this language. Please record again and speak clearly for at least 1 minute 30.',
+            fr: 'Vous n’avez pas assez parlé pour que nous puissions vérifier cette langue. Réenregistrez et parlez clairement pendant au moins 1 min 30.',
           },
         },
         meetsClaimedLevel: false,
