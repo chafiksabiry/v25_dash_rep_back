@@ -193,46 +193,9 @@ const buildProfileUpdate = (agent, insights) => {
   const set = {};
   const { langMap, skillMaps, industryIds, activityIds } = insights;
 
-  // Languages — keep existing assessment data, raise proficiency & scores to max.
-  const existingLanguages = agent?.personalInfo?.languages || [];
-  const languageById = new Map();
-  existingLanguages.forEach((lang) => {
-    if (lang && lang.language) languageById.set(String(lang.language), { ...lang });
-  });
-
-  langMap.forEach((data, id) => {
-    const objectId = toObjectId(id);
-    if (!objectId) return;
-
-    const videoAssessment = buildVideoAssessmentResults(data.score, data.proficiency, data.evidence);
-    const existing = languageById.get(id);
-
-    if (existing) {
-      const existingVerified = existing.assessmentResults && existing.assessmentResults.source === 'video';
-      if (existingVerified) {
-        // Already verified by a previous video: keep the strongest measurement
-        // across genuine video assessments (never downgrade a real result).
-        existing.proficiency = maxProficiency(existing.proficiency || 'A1', data.proficiency);
-        existing.assessmentResults = mergeAssessmentResults(existing.assessmentResults, videoAssessment);
-      } else {
-        // Existing level was only a CV estimate (or unset). The measured video
-        // assessment is authoritative and OVERRIDES it — even if it's lower
-        // (e.g. CV claimed C2 but the video demonstrates C1).
-        existing.proficiency = data.proficiency;
-        existing.assessmentResults = videoAssessment;
-      }
-    } else {
-      languageById.set(id, {
-        language: objectId,
-        proficiency: data.proficiency,
-        assessmentResults: videoAssessment,
-      });
-    }
-  });
-
-  if (langMap.size > 0) {
-    set['personalInfo.languages'] = Array.from(languageById.values());
-  }
+  // Languages detected in experience videos stay on the experience entry only.
+  // Dedicated language-tab videos (source: "language") verify personalInfo.languages separately.
+  // Do NOT merge experience spokenLanguages into profile languages here.
 
   // Skills — add detected skills, keeping the highest level per skill.
   ['technical', 'professional', 'soft'].forEach((type) => {

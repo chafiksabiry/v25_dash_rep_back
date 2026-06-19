@@ -75,4 +75,7 @@ router.post('/:id/experience/analyze-video', videoUpload.single('video'), profil
 // Analyze dedicated language verification video (Languages tab — not experience onboarding)
 router.post('/:id/language/analyze-video', videoUpload.single('video'), profileController.analyzeLanguageVideo.bind(profileController));
 
+// Delete dedicated language verification video (keeps the language entry)
+router.post('/:id/language/delete-video', profileController.deleteLanguageVideo.bind(profileController));
+
 module.exports = router; 
