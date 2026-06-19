@@ -72,4 +72,7 @@ router.get('/:id/plan', profileController.getPlan.bind(profileController));
 // Analyze experience video with AI (Whisper + GPT-4)
 router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
+// Analyze dedicated language verification video (Languages tab — not experience onboarding)
+router.post('/:id/language/analyze-video', videoUpload.single('video'), profileController.analyzeLanguageVideo.bind(profileController));
+
 module.exports = router; 

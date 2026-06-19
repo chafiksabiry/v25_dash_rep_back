@@ -11,6 +11,8 @@ const VocabularyService = require('./VocabularyService');
 const MAX_VIDEO_BYTES = 1000 * 1024 * 1024;
 // Limite réelle de l'API Whisper (fichier audio envoyé).
 const WHISPER_MAX_BYTES = 50 * 1024 * 1024;
+// Durée minimale pour une vidéo de vérification linguistique dédiée (onglet Langues).
+const MIN_LANGUAGE_VIDEO_SECONDS = 15;
 // Durée minimale exigée pour qu'une vidéo d'expérience soit analysable.
 const MIN_DURATION_SECONDS = 30;
 
@@ -235,6 +237,59 @@ Return ONLY valid JSON (no markdown):
   ]
 }`;
 
+// Targeted assessment: verify the speaker used ONE expected language at a claimed level.
+const buildTargetLanguageVideoPrompt = (
+  transcription,
+  targetLanguageName,
+  targetLanguageCode,
+  expectedProficiency,
+  allowedLanguages
+) => `You are a certified CEFR language examiner verifying a candidate's proficiency in ONE specific language.
+
+TARGET LANGUAGE TO VERIFY: ${targetLanguageName}${targetLanguageCode ? ` (${targetLanguageCode})` : ''}
+CLAIMED CEFR LEVEL ON PROFILE: ${expectedProficiency || 'unknown'}
+
+TRANSCRIPT (from a short self-introduction video):
+"${transcription || '[No speech detected]'}"
+
+${renderAllowedList('KNOWN PLATFORM LANGUAGES (use these exact names when the spoken language matches one)', allowedLanguages)}
+
+TASKS — VERY IMPORTANT:
+1. LANGUAGE MATCH: Determine whether the speech is PRIMARILY in "${targetLanguageName}".
+   - If the candidate spoke mostly in another language, set "languageMatch.matches" to false.
+   - If they mixed languages heavily or switched away from the target language, set matches to false.
+   - Only set matches to true when the transcript is clearly dominated by ${targetLanguageName}.
+2. CEFR ASSESSMENT: Judge ONLY the target language (${targetLanguageName}) from linguistic evidence in the transcript.
+3. CLAIM CHECK: Set "meetsClaimedLevel" to true when the assessed CEFR is at or above the claimed level (${expectedProficiency}), OR exactly one band below on a short sample (leniency). Otherwise false.
+
+SCORING RULES (same strictness as general language assessment):
+- NEVER default to 100. Cap scores by amount of speech evidence.
+- Very little speech (< 1 sentence): cap scores ~40, confidence "low".
+- Short sample: cap ~55-65. Rich sample: may exceed 85.
+- overallScore ≈ average of sub-scores.
+
+TONE: Address the candidate directly (English "You ...", French polite "Vous ...").
+All text fields MUST be bilingual { "en": "...", "fr": "..." }.
+
+Return ONLY valid JSON (no markdown):
+{
+  "languageMatch": {
+    "matches": true,
+    "detectedLanguage": "string",
+    "reason": { "en": "...", "fr": "..." }
+  },
+  "assessable": true,
+  "cefr": "A1|A2|B1|B2|C1|C2",
+  "overallScore": 0-100,
+  "fluency": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+  "grammar": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+  "vocabulary": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+  "coherence": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
+  "pronunciationEstimate": { "score": 0-100, "confidence": "low|medium|high", "feedback": { "en": "...", "fr": "..." } },
+  "meetsClaimedLevel": true,
+  "summary": { "en": "2-3 sentences to the person", "fr": "2-3 phrases avec vouvoiement" }
+}`;
+
 // Anti-fraud facial check run over several still frames extracted from the video.
 const FRAUD_SYSTEM_PROMPT =
   'You are a fraud-detection vision system for an identity-sensitive hiring platform. You receive several still frames sampled from one short self-introduction video. Return only valid JSON.';
@@ -371,12 +426,16 @@ class VideoAnalysisService {
     return tmpPath;
   }
 
-  async transcribeAudio(filePath) {
-    const response = await this.openai.audio.transcriptions.create({
+  async transcribeAudio(filePath, languageHint) {
+    const params = {
       file: fs.createReadStream(filePath),
       model: 'whisper-1',
       response_format: 'text',
-    });
+    };
+    if (languageHint && typeof languageHint === 'string' && languageHint.length === 2) {
+      params.language = languageHint.toLowerCase();
+    }
+    const response = await this.openai.audio.transcriptions.create(params);
     return typeof response === 'string' ? response.trim() : String(response).trim();
   }
 
@@ -508,6 +567,189 @@ class VideoAnalysisService {
     });
 
     return { assessable: parsed.assessable !== false, languages };
+  }
+
+  /**
+   * Assess whether the transcript matches ONE target language and the claimed CEFR level.
+   */
+  async assessTargetLanguage(transcription, targetLanguageName, targetLanguageCode, expectedProficiency, vocabLanguages) {
+    if (meaningfulSpeechWordCount(transcription) < MIN_MEANINGFUL_WORDS) {
+      return {
+        assessable: false,
+        languageMatch: {
+          matches: false,
+          detectedLanguage: '',
+          reason: {
+            en: 'You did not speak enough for us to verify this language. Please record again and speak clearly for at least 15 seconds.',
+            fr: 'Vous n’avez pas assez parlé pour que nous puissions vérifier cette langue. Réenregistrez et parlez clairement pendant au moins 15 secondes.',
+          },
+        },
+        meetsClaimedLevel: false,
+        cefr: null,
+        overallScore: 0,
+      };
+    }
+
+    let parsed;
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a certified CEFR language examiner. Return only valid JSON, no markdown.',
+          },
+          {
+            role: 'user',
+            content: buildTargetLanguageVideoPrompt(
+              transcription,
+              targetLanguageName,
+              targetLanguageCode,
+              expectedProficiency,
+              vocabLanguages
+            ),
+          },
+        ],
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+      });
+      parsed = JSON.parse(response.choices[0].message.content);
+    } catch (err) {
+      console.error('Target language assessment failed:', err.message);
+      return {
+        assessable: false,
+        languageMatch: {
+          matches: false,
+          detectedLanguage: '',
+          reason: {
+            en: 'The language assessment could not be completed. Please try again.',
+            fr: 'L’évaluation linguistique n’a pas pu être effectuée. Veuillez réessayer.',
+          },
+        },
+        meetsClaimedLevel: false,
+        cefr: null,
+        overallScore: 0,
+      };
+    }
+
+    const wordCount = transcription.trim().split(/\s+/).filter(Boolean).length;
+    const scoreCap = this.evidenceScoreCap(wordCount);
+    const clamp = (v) => Math.max(0, Math.min(scoreCap, Math.round(Number(v) || 0)));
+    const emptyText = { en: '', fr: '' };
+    const clampSub = (sub) =>
+      sub && typeof sub === 'object'
+        ? { ...sub, score: clamp(sub.score) }
+        : { score: 0, feedback: { ...emptyText } };
+
+    const overallScore = clamp(parsed.overallScore);
+    const languageMatch = parsed.languageMatch || {
+      matches: false,
+      detectedLanguage: '',
+      reason: { ...emptyText },
+    };
+
+    return {
+      assessable: parsed.assessable !== false && languageMatch.matches !== false,
+      languageMatch: {
+        matches: languageMatch.matches === true,
+        detectedLanguage: languageMatch.detectedLanguage || '',
+        reason: languageMatch.reason || { ...emptyText },
+      },
+      cefr: this.scoreToCefr(overallScore, parsed.cefr),
+      overallScore,
+      fluency: clampSub(parsed.fluency),
+      grammar: clampSub(parsed.grammar),
+      vocabulary: clampSub(parsed.vocabulary),
+      coherence: clampSub(parsed.coherence),
+      pronunciationEstimate: parsed.pronunciationEstimate
+        ? {
+            ...parsed.pronunciationEstimate,
+            score: clamp(parsed.pronunciationEstimate.score),
+            confidence: parsed.pronunciationEstimate.confidence || 'low',
+          }
+        : { score: 0, confidence: 'low', feedback: { ...emptyText } },
+      meetsClaimedLevel: parsed.meetsClaimedLevel === true,
+      summary: parsed.summary || { ...emptyText },
+      evidenceWords: wordCount,
+    };
+  }
+
+  /**
+   * Dedicated language-tab video: verify the rep spoke in the selected language at the claimed level.
+   * Does NOT run experience/skills/industry extraction (unlike analyzeExperienceVideo).
+   */
+  async analyzeLanguageVideo(videoBuffer, mimetype, languageContext = {}) {
+    this._ensureInitialized();
+
+    if (videoBuffer.length > MAX_VIDEO_BYTES) {
+      throw new Error(
+        `Video is too large for analysis (${Math.round(videoBuffer.length / 1024 / 1024)}MB). Maximum is ${Math.round(MAX_VIDEO_BYTES / 1024 / 1024)}MB.`
+      );
+    }
+
+    const {
+      languageName = '',
+      languageCode = '',
+      expectedProficiency = '',
+      referencePhotoUrl = null,
+    } = languageContext;
+
+    let safeVocab;
+    try {
+      safeVocab = await this.vocabularyService.getVocabulary();
+    } catch (err) {
+      console.error('Failed to load vocabulary from DB:', err.message);
+      safeVocab = { languages: [] };
+    }
+
+    const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
+    const tmpPath = path.join(os.tmpdir(), `lang-video-${Date.now()}.${ext}`);
+    let audioTmpPath = null;
+
+    try {
+      fs.writeFileSync(tmpPath, videoBuffer);
+
+      const upload = await this.uploadToCloudinary(tmpPath);
+
+      if (typeof upload.duration === 'number' && upload.duration < MIN_LANGUAGE_VIDEO_SECONDS) {
+        throw new VideoValidationError(
+          `Video is too short (${Math.round(upload.duration)}s). A minimum of ${MIN_LANGUAGE_VIDEO_SECONDS} seconds is required.`,
+          'VIDEO_TOO_SHORT',
+          { duration: upload.duration, minDuration: MIN_LANGUAGE_VIDEO_SECONDS }
+        );
+      }
+
+      const audioUrl = this.buildAudioUrl(upload.publicId);
+      audioTmpPath = await this.downloadToTemp(audioUrl, 'mp3');
+
+      const whisperHint = languageCode && languageCode.length === 2 ? languageCode : undefined;
+      const transcription = await this.transcribeAudio(audioTmpPath, whisperHint);
+
+      const [assessment, fraudCheck] = await Promise.all([
+        this.assessTargetLanguage(
+          transcription,
+          languageName,
+          languageCode,
+          expectedProficiency,
+          safeVocab.languages
+        ),
+        this.detectFacesAndFraud(upload.publicId, upload.duration, referencePhotoUrl),
+      ]);
+
+      return {
+        videoUrl: upload.url,
+        duration: upload.duration,
+        transcription,
+        assessment,
+        fraudCheck,
+        targetLanguage: languageName,
+        expectedProficiency,
+        provider: 'openai',
+      };
+    } finally {
+      if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
+      if (audioTmpPath && fs.existsSync(audioTmpPath)) fs.unlinkSync(audioTmpPath);
+    }
   }
 
   // Maximum score allowed given how many words of evidence are available.
@@ -822,3 +1064,4 @@ class VideoAnalysisService {
 module.exports = VideoAnalysisService;
 module.exports.VideoValidationError = VideoValidationError;
 module.exports.MIN_DURATION_SECONDS = MIN_DURATION_SECONDS;
+module.exports.MIN_LANGUAGE_VIDEO_SECONDS = MIN_LANGUAGE_VIDEO_SECONDS;

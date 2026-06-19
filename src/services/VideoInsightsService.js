@@ -66,7 +66,7 @@ const scoreToLevel = (score) => {
   return 1;
 };
 
-const buildVideoAssessmentResults = (score, proficiency, evidence) => {
+const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) => {
   const safeScore = typeof score === 'number' ? Math.round(score) : 0;
   const feedback = evidence || 'Detected from experience video analysis';
 
@@ -81,6 +81,7 @@ const buildVideoAssessmentResults = (score, proficiency, evidence) => {
     },
     source: 'video',
     completedAt: new Date(),
+    ...extra,
   };
 };
 

@@ -531,6 +531,78 @@ class ProfileController {
       res.status(500).json({ message: 'Video analysis failed', error: error.message });
     }
   }
+
+  async analyzeLanguageVideo(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No video file provided' });
+      }
+
+      const languageName = String(req.body.languageName || req.body.language || '').trim();
+      const expectedProficiency = String(req.body.expectedProficiency || req.body.proficiency || '').trim();
+
+      if (!languageName) {
+        return res.status(400).json({ message: 'languageName is required' });
+      }
+      if (!expectedProficiency) {
+        return res.status(400).json({ message: 'expectedProficiency is required' });
+      }
+
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(req.params.id);
+
+      const languageContext = {
+        languageName,
+        languageCode: String(req.body.languageCode || req.body.iso639_1 || '').trim(),
+        expectedProficiency,
+        referencePhotoUrl,
+      };
+
+      logger.info(
+        `Analyzing language video for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency})`
+      );
+
+      const result = await this.videoAnalysisService.analyzeLanguageVideo(
+        req.file.buffer,
+        req.file.mimetype,
+        languageContext
+      );
+
+      let saved = false;
+      if (result.assessment?.assessable && result.assessment?.languageMatch?.matches) {
+        try {
+          saved = await this.profileRepository.saveLanguageVideoAssessment(
+            req.params.id,
+            {
+              languageName,
+              languageCode: languageContext.languageCode,
+              languageId: String(req.body.languageId || '').trim(),
+            },
+            result
+          );
+          if (saved) {
+            logger.info(`Saved language video assessment for profile ${req.params.id} (${languageName})`);
+          } else {
+            logger.warn(`Could not match language entry to persist assessment for profile ${req.params.id}`);
+          }
+        } catch (persistError) {
+          logger.error(`Failed to persist language video assessment: ${persistError.message}`);
+        }
+      }
+
+      res.json({ data: { ...result, saved } });
+    } catch (error) {
+      if (error?.name === 'VideoValidationError') {
+        logger.warn(`Language video validation failed for profile ${req.params.id}: ${error.message}`);
+        return res.status(400).json({
+          message: error.message,
+          code: error.code,
+          details: error.details || {},
+        });
+      }
+      logger.error(`Error in analyzeLanguageVideo controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Language video analysis failed', error: error.message });
+    }
+  }
 }
 
 module.exports = ProfileController; 

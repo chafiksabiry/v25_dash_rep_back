@@ -5,6 +5,7 @@ const logger = require('../utils/logger');
 const {
   aggregateFromExperiences,
   buildProfileUpdate,
+  buildVideoAssessmentResults,
 } = require('../services/VideoInsightsService');
 
 class ProfileRepository {
@@ -135,6 +136,93 @@ class ProfileRepository {
     }
 
     return false;
+  }
+
+  /**
+   * Persist a dedicated language-tab video assessment onto personalInfo.languages[].
+   * Matches by language ObjectId, ISO code, or display name (case-insensitive).
+   */
+  async saveLanguageVideoAssessment(profileId, context = {}, payload = {}) {
+    const filter = mongoose.isValidObjectId(profileId)
+      ? { _id: profileId }
+      : { userId: profileId };
+
+    const agent = await Agent.findOne(filter).lean();
+    if (!agent?.personalInfo?.languages?.length) return false;
+
+    const { languageName = '', languageCode = '', languageId = '' } = context;
+    const assessment = payload.assessment || {};
+    if (!assessment.assessable || !assessment.languageMatch?.matches) return false;
+
+    const langs = agent.personalInfo.languages;
+    const targetName = String(languageName || '').trim().toLowerCase();
+    const targetCode = String(languageCode || '').trim().toLowerCase();
+    const targetId = String(languageId || '').trim();
+
+    const idx = langs.findIndex((entry) => {
+      if (!entry) return false;
+      const ref = entry.language;
+      if (targetId && ref) {
+        const refId = typeof ref === 'object' && ref._id ? String(ref._id) : String(ref);
+        if (refId === targetId) return true;
+      }
+      if (targetCode && String(entry.iso639_1 || entry.code || '').toLowerCase() === targetCode) return true;
+      if (typeof ref === 'string' && !mongoose.isValidObjectId(ref) && targetName) {
+        return ref.toLowerCase() === targetName;
+      }
+      if (typeof ref === 'object' && ref?.name && targetName) {
+        return String(ref.name).toLowerCase() === targetName;
+      }
+      return false;
+    });
+
+    if (idx < 0) return false;
+
+    const flattenFeedback = (sub) => {
+      if (!sub?.feedback) return '';
+      if (typeof sub.feedback === 'string') return sub.feedback;
+      return sub.feedback.en || sub.feedback.fr || '';
+    };
+
+    const summaryText =
+      typeof assessment.summary === 'string'
+        ? assessment.summary
+        : assessment.summary?.en || assessment.summary?.fr || '';
+
+    const videoAssessment = buildVideoAssessmentResults(
+      assessment.overallScore,
+      assessment.cefr,
+      summaryText || flattenFeedback(assessment.fluency),
+      {
+        fluency: {
+          score: assessment.fluency?.score ?? assessment.overallScore ?? 0,
+          feedback: flattenFeedback(assessment.fluency),
+        },
+        proficiency: {
+          score: assessment.grammar?.score ?? assessment.overallScore ?? 0,
+          feedback: flattenFeedback(assessment.grammar),
+        },
+        completeness: {
+          score: assessment.vocabulary?.score ?? assessment.overallScore ?? 0,
+          feedback: flattenFeedback(assessment.vocabulary),
+        },
+        overall: {
+          score: assessment.overallScore ?? 0,
+          strengths: summaryText || `CEFR ${assessment.cefr || ''} verified by language video`,
+          areasForImprovement: flattenFeedback(assessment.coherence),
+        },
+        videoUrl: payload.videoUrl || null,
+        verifiedAt: new Date(),
+      }
+    );
+
+    const set = {
+      [`personalInfo.languages.${idx}.assessmentResults`]: videoAssessment,
+      [`personalInfo.languages.${idx}.proficiency`]: assessment.cefr || langs[idx].proficiency,
+    };
+
+    const res = await Agent.updateOne(filter, { $set: set });
+    return res.matchedCount > 0;
   }
 
   /**
