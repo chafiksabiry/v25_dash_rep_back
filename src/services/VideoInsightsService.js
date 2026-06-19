@@ -69,6 +69,7 @@ const scoreToLevel = (score) => {
 const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) => {
   const safeScore = typeof score === 'number' ? Math.round(score) : 0;
   const feedback = evidence || 'Detected from experience video analysis';
+  const verifiedProficiency = extra.verifiedProficiency || proficiency || null;
 
   return {
     completeness: { score: safeScore, feedback },
@@ -76,10 +77,13 @@ const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) =
     proficiency: { score: safeScore, feedback },
     overall: {
       score: safeScore,
-      strengths: proficiency ? `CEFR ${proficiency} demonstrated in experience video` : 'Demonstrated in experience video',
+      strengths: verifiedProficiency
+        ? `CEFR ${verifiedProficiency} demonstrated`
+        : 'Demonstrated in video',
       areasForImprovement: '',
     },
-    source: 'video',
+    verifiedProficiency,
+    source: extra.source || 'video',
     completedAt: new Date(),
     ...extra,
   };
@@ -134,7 +138,7 @@ const aggregateFromExperiences = (experiences) => {
   const industryIds = new Set();
   const activityIds = new Set();
 
-  (Array.isArray(experiences) ? experiences : []).forEach((exp) => {
+  (Array.isArray(experiences) ? experiences : []).forEach((exp, expIndex) => {
     const va = exp && exp.videoAnalysis;
     if (!va || typeof va !== 'object') return;
 
@@ -146,16 +150,20 @@ const aggregateFromExperiences = (experiences) => {
 
       const score = typeof entry.score === 'number' ? entry.score : 0;
       const evidence = flattenText(entry.evidence);
+      const experienceVideoUrl = exp.videoUrl || null;
       const current = langMap.get(id);
       if (!current) {
-        langMap.set(id, { proficiency: prof, score, evidence });
+        langMap.set(id, { proficiency: prof, score, evidence, experienceVideoUrl, experienceIndex: expIndex });
         return;
       }
 
+      const keepCurrent = current.score > score;
       langMap.set(id, {
         proficiency: maxProficiency(current.proficiency, prof),
         score: maxScore(current.score, score),
-        evidence: score >= current.score ? (evidence || current.evidence) : current.evidence,
+        evidence: keepCurrent ? current.evidence : (evidence || current.evidence),
+        experienceVideoUrl: keepCurrent ? current.experienceVideoUrl : experienceVideoUrl,
+        experienceIndex: keepCurrent ? current.experienceIndex : expIndex,
       });
     });
 
@@ -193,9 +201,70 @@ const buildProfileUpdate = (agent, insights) => {
   const set = {};
   const { langMap, skillMaps, industryIds, activityIds } = insights;
 
-  // Languages detected in experience videos stay on the experience entry only.
-  // Dedicated language-tab videos (source: "language") verify personalInfo.languages separately.
-  // Do NOT merge experience spokenLanguages into profile languages here.
+  // Languages — keep existing assessment data, raise proficiency & scores to max.
+  const existingLanguages = agent?.personalInfo?.languages || [];
+  const languageById = new Map();
+  existingLanguages.forEach((lang) => {
+    if (lang && lang.language) languageById.set(String(lang.language), { ...lang });
+  });
+
+  const excluded = new Set(
+    (agent?.personalInfo?.excludedLanguageIds || []).map((id) => String(id))
+  );
+
+  langMap.forEach((data, id) => {
+    if (excluded.has(id)) return;
+
+    const objectId = toObjectId(id);
+    if (!objectId) return;
+
+    const existing = languageById.get(id);
+
+    // Dedicated language-tab verification is never overwritten by experience aggregation.
+    if (existing?.assessmentResults?.source === 'language') {
+      return;
+    }
+
+    const videoAssessment = buildVideoAssessmentResults(data.score, data.proficiency, data.evidence, {
+      source: 'experience',
+      verifiedProficiency: data.proficiency,
+      experienceVideoUrl: data.experienceVideoUrl || null,
+      experienceIndex: typeof data.experienceIndex === 'number' ? data.experienceIndex : null,
+    });
+
+    if (existing) {
+      const existingSource = existing.assessmentResults?.source;
+      if (existingSource === 'language') {
+        return;
+      }
+      if (existingSource === 'experience' || existingSource === 'video') {
+        existing.proficiency = maxProficiency(existing.proficiency || 'A1', data.proficiency);
+        existing.assessmentResults = mergeAssessmentResults(existing.assessmentResults, {
+          ...videoAssessment,
+          source: 'experience',
+          verifiedProficiency: existing.assessmentResults?.verifiedProficiency || data.proficiency,
+          experienceVideoUrl: data.experienceVideoUrl || existing.assessmentResults?.experienceVideoUrl,
+          experienceIndex:
+            typeof data.experienceIndex === 'number'
+              ? data.experienceIndex
+              : existing.assessmentResults?.experienceIndex,
+        });
+      } else {
+        existing.proficiency = data.proficiency;
+        existing.assessmentResults = videoAssessment;
+      }
+    } else {
+      languageById.set(id, {
+        language: objectId,
+        proficiency: data.proficiency,
+        assessmentResults: videoAssessment,
+      });
+    }
+  });
+
+  if (langMap.size > 0) {
+    set['personalInfo.languages'] = Array.from(languageById.values());
+  }
 
   // Skills — add detected skills, keeping the highest level per skill.
   ['technical', 'professional', 'soft'].forEach((type) => {

@@ -576,6 +576,7 @@ class ProfileController {
               languageName,
               languageCode: languageContext.languageCode,
               languageId: String(req.body.languageId || '').trim(),
+              expectedProficiency: languageContext.expectedProficiency,
             },
             result
           );
@@ -601,31 +602,6 @@ class ProfileController {
       }
       logger.error(`Error in analyzeLanguageVideo controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Language video analysis failed', error: error.message });
-    }
-  }
-
-  async deleteLanguageVideo(req, res) {
-    try {
-      const languageName = String(req.body.languageName || req.body.language || '').trim();
-      if (!languageName) {
-        return res.status(400).json({ message: 'languageName is required' });
-      }
-
-      const deleted = await this.profileRepository.deleteLanguageVideoAssessment(req.params.id, {
-        languageName,
-        languageCode: String(req.body.languageCode || req.body.iso639_1 || '').trim(),
-        languageId: String(req.body.languageId || '').trim(),
-      });
-
-      if (!deleted) {
-        return res.status(404).json({ message: 'Language video not found or already removed' });
-      }
-
-      logger.info(`Deleted language video for profile ${req.params.id} (${languageName})`);
-      res.json({ success: true });
-    } catch (error) {
-      logger.error(`Error in deleteLanguageVideo controller: ${error.message}`, { error });
-      res.status(500).json({ message: 'Failed to delete language video' });
     }
   }
 }
