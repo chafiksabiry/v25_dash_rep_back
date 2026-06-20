@@ -16,7 +16,7 @@ COPY . .
 JWT_SECRET=your_jwt_secret_key_here
 REP_PROFILE_API=https://v25repscreationwizardbackend-production-bdd2.up.railway.app/api 
 FRONT_URL=https://harxv25dashboardrepfront.netlify.app
-QIANKUN_MAIN_APP_URL=https://harx25pageslinks.netlify.app
+QIANKUN_MAIN_APP_URL=https://harx.ai
 
 
 # Start the application
