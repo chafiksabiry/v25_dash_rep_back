@@ -29,14 +29,48 @@ const app = express();
 // Set up trust proxy for secure handling of headers
 app.set('trust proxy', true); 
 
-const corsOptions = {
-  origin: [process.env.FRONT_URL, process.env.QIANKUN_MAIN_APP_URL],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id', 'x-agent-id'], 
+const allowedOrigins = [
+  process.env.FRONT_URL,
+  process.env.QIANKUN_MAIN_APP_URL,
+  'https://harx.ai',
+  'https://v25.harx.ai',
+  'https://v25-preprod.harx.ai',
+  'https://harxv25dashboardfrontend.netlify.app',
+  'https://harxv25comporchestratorfront.netlify.app',
+  'https://harxv25dashboardrepfront.netlify.app',
+  'http://localhost:5173',
+  'http://localhost:5183',
+  'http://localhost:3000',
+].filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.harx.ai') ||
+      origin.endsWith('.netlify.app')
+    ) {
+      return callback(null, true);
+    }
+
+    console.log('CORS blocked origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'x-user-id',
+    'x-agent-id',
+    'Accept',
+    'Origin',
+    'X-Requested-With',
+  ],
   credentials: true,
-  optionsSuccessStatus: 200
-};
-app.use(cors(corsOptions));
+  optionsSuccessStatus: 204,
+}));
 
 // ✅ Set CORS headers for static file requests too
 /* app.use((req, res, next) => {
