@@ -558,7 +558,7 @@ class ProfileController {
       };
 
       logger.info(
-        `Analyzing language video for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency})`
+        `Analyzing language video for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency}), size: ${Math.round(req.file.size / 1024)}KB`
       );
 
       const result = await this.videoAnalysisService.analyzeLanguageVideo(

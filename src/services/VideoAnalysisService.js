@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const VocabularyService = require('./VocabularyService');
+const logger = require('../utils/logger');
 
 // Garde-fou sur l'upload (mémoire). Whisper ne reçoit plus la vidéo mais l'audio
 // extrait (mp3) — bien plus léger — donc la limite de 25 Mo de Whisper ne s'applique plus.
@@ -681,6 +682,12 @@ class VideoAnalysisService {
    */
   async analyzeLanguageVideo(videoBuffer, mimetype, languageContext = {}) {
     this._ensureInitialized();
+    const langLabel = languageContext.languageName || 'unknown';
+    const startedAt = Date.now();
+    const step = (label) =>
+      logger.info(`[lang-video:${langLabel}] ${label} (+${Date.now() - startedAt}ms)`);
+
+    step(`start (${Math.round(videoBuffer.length / 1024)}KB, ${mimetype})`);
 
     if (videoBuffer.length > MAX_VIDEO_BYTES) {
       throw new Error(
@@ -709,8 +716,10 @@ class VideoAnalysisService {
 
     try {
       fs.writeFileSync(tmpPath, videoBuffer);
+      step('temp file written, uploading to Cloudinary');
 
       const upload = await this.uploadToCloudinary(tmpPath);
+      step(`Cloudinary done (duration=${upload.duration ?? '?'}s)`);
 
       if (typeof upload.duration === 'number' && upload.duration < MIN_LANGUAGE_VIDEO_SECONDS) {
         throw new VideoValidationError(
@@ -729,11 +738,15 @@ class VideoAnalysisService {
       }
 
       const audioUrl = this.buildAudioUrl(upload.publicId);
+      step('extracting audio mp3 from Cloudinary');
       audioTmpPath = await this.downloadToTemp(audioUrl, 'mp3');
+      step('audio ready, Whisper transcription');
 
       const whisperHint = languageCode && languageCode.length === 2 ? languageCode : undefined;
       const transcription = await this.transcribeAudio(audioTmpPath, whisperHint);
+      step(`Whisper done (${transcription?.length ?? 0} chars)`);
 
+      step('GPT language assessment + fraud check');
       const [assessment, fraudCheck] = await Promise.all([
         this.assessTargetLanguage(
           transcription,
@@ -744,6 +757,10 @@ class VideoAnalysisService {
         ),
         this.detectFacesAndFraud(upload.publicId, upload.duration, referencePhotoUrl),
       ]);
+
+      step(
+        `complete — match=${assessment?.languageMatch?.matches}, cefr=${assessment?.cefr}, score=${assessment?.overallScore}`
+      );
 
       return {
         videoUrl: upload.url,
