@@ -12,7 +12,7 @@ const MAX_VIDEO_BYTES = 1000 * 1024 * 1024;
 // Limite réelle de l'API Whisper (fichier audio envoyé).
 const WHISPER_MAX_BYTES = 50 * 1024 * 1024;
 // Durée minimale pour une vidéo de vérification linguistique dédiée (onglet Langues).
-const MIN_LANGUAGE_VIDEO_SECONDS = 90; // 1 min 30
+const MIN_LANGUAGE_VIDEO_SECONDS = 30;
 const MAX_LANGUAGE_VIDEO_SECONDS = 180; // 3 min
 // Durée minimale exigée pour qu'une vidéo d'expérience soit analysable.
 const MIN_DURATION_SECONDS = 30;
@@ -714,7 +714,7 @@ class VideoAnalysisService {
 
       if (typeof upload.duration === 'number' && upload.duration < MIN_LANGUAGE_VIDEO_SECONDS) {
         throw new VideoValidationError(
-          `Video is too short (${Math.round(upload.duration)}s). Duration must be between 1 min 30 and 3 min.`,
+          `Video is too short (${Math.round(upload.duration)}s). Duration must be between 30 s and 3 min.`,
           'VIDEO_TOO_SHORT',
           { duration: upload.duration, minDuration: MIN_LANGUAGE_VIDEO_SECONDS, maxDuration: MAX_LANGUAGE_VIDEO_SECONDS }
         );
@@ -722,7 +722,7 @@ class VideoAnalysisService {
 
       if (typeof upload.duration === 'number' && upload.duration > MAX_LANGUAGE_VIDEO_SECONDS) {
         throw new VideoValidationError(
-          `Video is too long (${Math.round(upload.duration)}s). Duration must be between 1 min 30 and 3 min.`,
+          `Video is too long (${Math.round(upload.duration)}s). Duration must be between 30 s and 3 min.`,
           'VIDEO_TOO_LONG',
           { duration: upload.duration, minDuration: MIN_LANGUAGE_VIDEO_SECONDS, maxDuration: MAX_LANGUAGE_VIDEO_SECONDS }
         );
