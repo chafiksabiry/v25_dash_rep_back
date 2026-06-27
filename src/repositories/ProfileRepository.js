@@ -3,9 +3,8 @@ const Profile = require('../models/Profile');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
 const {
-  aggregateFromExperiences,
-  buildProfileUpdate,
   buildVideoAssessmentResults,
+  rebuildProfileVideoInsights,
 } = require('../services/VideoInsightsService');
 
 class ProfileRepository {
@@ -233,18 +232,16 @@ class ProfileRepository {
   }
 
   /**
-   * Aggregate every experience's videoAnalysis into profile-level skills,
-   * languages, industries and activities. Languages keep the highest CEFR
-   * level across experiences; skills are added (highest level wins). This is
-   * additive and never removes manually-entered data.
+   * Rebuild profile-level skills/languages from experiences that still have
+   * a valid video URL and analysis. Stale video-derived skills are removed
+   * when the source video is gone — the REP must re-upload and re-analyze.
    */
   async applyVideoInsights(filter) {
     try {
       const agent = await Agent.findOne(filter).lean();
       if (!agent) return false;
 
-      const insights = aggregateFromExperiences(agent.experience);
-      const set = buildProfileUpdate(agent, insights);
+      const set = rebuildProfileVideoInsights(agent);
 
       if (Object.keys(set).length === 0) return false;
 
