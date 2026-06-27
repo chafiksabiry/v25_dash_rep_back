@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 // CEFR ordering used to keep the highest proficiency across experiences.
 const LANG_ORDER = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+const VIDEO_SKILL_DETAILS = 'Detected from experience video';
 
 const toObjectId = (id) => {
   if (id instanceof mongoose.Types.ObjectId) return id;
@@ -139,6 +140,7 @@ const aggregateFromExperiences = (experiences) => {
   const activityIds = new Set();
 
   (Array.isArray(experiences) ? experiences : []).forEach((exp, expIndex) => {
+    if (!exp?.videoUrl) return;
     const va = exp && exp.videoAnalysis;
     if (!va || typeof va !== 'object') return;
 
@@ -284,7 +286,7 @@ const buildProfileUpdate = (agent, insights) => {
       if (current) {
         current.level = Math.max(current.level || 0, level);
       } else {
-        byId.set(id, { skill: objectId, level, details: 'Detected from experience video' });
+        byId.set(id, { skill: objectId, level, details: VIDEO_SKILL_DETAILS });
       }
     });
 
@@ -321,6 +323,50 @@ const buildProfileUpdate = (agent, insights) => {
   return set;
 };
 
+const stripVideoDerivedSkills = (skills = {}) => {
+  const cleaned = {};
+  ['technical', 'professional', 'soft', 'contactCenter'].forEach((type) => {
+    cleaned[type] = (skills[type] || []).filter(
+      (entry) => entry?.details !== VIDEO_SKILL_DETAILS,
+    );
+  });
+  return cleaned;
+};
+
+const stripExperienceLanguageAssessments = (languages = []) =>
+  (Array.isArray(languages) ? languages : []).map((lang) => {
+    if (!lang) return lang;
+    const source = lang.assessmentResults?.source;
+    if (source === 'language') return lang;
+    if (source === 'experience' || source === 'video') {
+      const { assessmentResults, ...rest } = lang;
+      return rest;
+    }
+    return lang;
+  });
+
+/**
+ * Rebuild profile-level skills/languages from experiences that still have a video URL
+ * and analysis. Removes stale "Detected from experience video" skills when the source
+ * video is gone — user must re-upload and re-analyze.
+ */
+const rebuildProfileVideoInsights = (agent) => {
+  const validExperiences = (Array.isArray(agent?.experience) ? agent.experience : []).filter(
+    (exp) => exp?.videoUrl && exp?.videoAnalysis,
+  );
+  const cleanedAgent = {
+    ...agent,
+    skills: stripVideoDerivedSkills(agent?.skills),
+    personalInfo: {
+      ...(agent?.personalInfo || {}),
+      languages: stripExperienceLanguageAssessments(agent?.personalInfo?.languages),
+    },
+    experience: validExperiences,
+  };
+  const insights = aggregateFromExperiences(validExperiences);
+  return buildProfileUpdate(cleanedAgent, insights);
+};
+
 module.exports = {
   LANG_ORDER,
   normalizeProficiency,
@@ -330,4 +376,7 @@ module.exports = {
   mergeAssessmentResults,
   aggregateFromExperiences,
   buildProfileUpdate,
+  VIDEO_SKILL_DETAILS,
+  stripVideoDerivedSkills,
+  rebuildProfileVideoInsights,
 };
