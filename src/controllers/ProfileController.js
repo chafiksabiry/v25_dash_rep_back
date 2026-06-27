@@ -1,5 +1,6 @@
 const ProfileService = require('../services/ProfileService');
 const VideoAnalysisService = require('../services/VideoAnalysisService');
+const LanguageVideoJobService = require('../services/LanguageVideoJobService');
 const ProfileRepository = require('../repositories/ProfileRepository');
 const logger = require('../utils/logger');
 
@@ -558,39 +559,24 @@ class ProfileController {
       };
 
       logger.info(
-        `Analyzing language video for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency}), size: ${Math.round(req.file.size / 1024)}KB`
+        `Queueing language video job for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency}), size: ${Math.round(req.file.size / 1024)}KB`
       );
 
-      const result = await this.videoAnalysisService.analyzeLanguageVideo(
-        req.file.buffer,
-        req.file.mimetype,
-        languageContext
-      );
+      const job = await LanguageVideoJobService.createJob({
+        profileId: req.params.id,
+        videoBuffer: req.file.buffer,
+        mimetype: req.file.mimetype,
+        languageContext,
+        requestBody: req.body,
+      });
 
-      let saved = false;
-      if (result.assessment?.assessable && result.assessment?.languageMatch?.matches) {
-        try {
-          saved = await this.profileRepository.saveLanguageVideoAssessment(
-            req.params.id,
-            {
-              languageName,
-              languageCode: languageContext.languageCode,
-              languageId: String(req.body.languageId || '').trim(),
-              expectedProficiency: languageContext.expectedProficiency,
-            },
-            result
-          );
-          if (saved) {
-            logger.info(`Saved language video assessment for profile ${req.params.id} (${languageName})`);
-          } else {
-            logger.warn(`Could not match language entry to persist assessment for profile ${req.params.id}`);
-          }
-        } catch (persistError) {
-          logger.error(`Failed to persist language video assessment: ${persistError.message}`);
-        }
-      }
+      LanguageVideoJobService.startJob(job._id);
 
-      res.json({ data: { ...result, saved } });
+      return res.status(202).json({
+        jobId: job._id,
+        status: 'processing',
+        message: 'Video uploaded. Analysis is running in the background.',
+      });
     } catch (error) {
       if (error?.name === 'VideoValidationError') {
         logger.warn(`Language video validation failed for profile ${req.params.id}: ${error.message}`);
@@ -602,6 +588,40 @@ class ProfileController {
       }
       logger.error(`Error in analyzeLanguageVideo controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Language video analysis failed', error: error.message });
+    }
+  }
+
+  async getLanguageVideoJobStatus(req, res) {
+    try {
+      const job = await LanguageVideoJobService.getJob(req.params.id, req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ message: 'Analysis job not found' });
+      }
+
+      if (job.status === 'queued' || job.status === 'processing') {
+        return res.json({ jobId: job._id, status: job.status });
+      }
+
+      if (job.status === 'failed') {
+        const err = job.error || {};
+        if (err.name === 'VideoValidationError') {
+          return res.status(400).json({
+            status: 'failed',
+            message: err.message,
+            code: err.code,
+            details: err.details || {},
+          });
+        }
+        return res.status(500).json({
+          status: 'failed',
+          message: err.message || 'Language video analysis failed',
+        });
+      }
+
+      return res.json({ status: 'completed', data: job.result });
+    } catch (error) {
+      logger.error(`Error in getLanguageVideoJobStatus: ${error.message}`, { error });
+      res.status(500).json({ message: 'Could not load analysis status' });
     }
   }
 }

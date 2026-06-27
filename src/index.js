@@ -102,11 +102,14 @@ app.get('/health', (req, res) => {
 // Add error handling middleware (should be after all routes)
 app.use(errorHandler);
 
-// Start server
+// Start server (long timeouts for large uploads; language analysis runs async after 202)
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
 });
+server.timeout = 10 * 60 * 1000;
+server.keepAliveTimeout = 10 * 60 * 1000 + 5000;
+server.headersTimeout = 10 * 60 * 1000 + 10000;
 
 // Handle uncaught exceptions and unhandled rejections
 process.on('uncaughtException', (error) => {
