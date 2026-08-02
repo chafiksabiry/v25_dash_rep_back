@@ -1,9 +1,21 @@
 const ProfileService = require('../services/ProfileService');
+const VideoAnalysisService = require('../services/VideoAnalysisService');
+const LanguageVideoJobService = require('../services/LanguageVideoJobService');
+const ProfileRepository = require('../repositories/ProfileRepository');
 const logger = require('../utils/logger');
 
 class ProfileController {
   constructor() {
     this.profileService = new ProfileService();
+    this.profileRepository = new ProfileRepository();
+    this._videoAnalysisService = null;
+  }
+
+  get videoAnalysisService() {
+    if (!this._videoAnalysisService) {
+      this._videoAnalysisService = new VideoAnalysisService();
+    }
+    return this._videoAnalysisService;
   }
 
   async getProfile(req, res) {
@@ -17,15 +29,14 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        logger.warn(`No token provided for user ${userId}`);
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn(`No token provided for user ${userId} - some external features may be limited`);
       }
 
       logger.info(`Retrieving profile for user: ${userId}`);
       const profile = await this.profileService.getProfile(userId, token);
-      
+
       if (!profile) {
         logger.warn(`Profile not found for user ${userId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -49,16 +60,16 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Retrieving profile by ID: ${userId}`);
       logger.info(`Retrieving token in getProfileById controller: ${token}`);
 
       const profile = await this.profileService.getProfile(userId, token);
-      
+
       if (!profile) {
         logger.warn(`Profile not found for ID ${userId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -75,7 +86,7 @@ class ProfileController {
     try {
       const profileId = req.params.id;
       const profileData = req.body;
-      
+
       if (!profileId) {
         return res.status(400).json({ message: 'Profile ID is required' });
       }
@@ -83,17 +94,17 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       // Validate required fields based on update type
       if (profileData.personalInfo) {
         const { name, email } = profileData.personalInfo;
         if (!name || !email) {
-          return res.status(400).json({ 
-            message: 'Name and email are required in personal info' 
+          return res.status(400).json({
+            message: 'Name and email are required in personal info'
           });
         }
       }
@@ -101,8 +112,8 @@ class ProfileController {
       if (profileData.experience) {
         for (const exp of profileData.experience) {
           if (!exp.title || !exp.company || !exp.startDate) {
-            return res.status(400).json({ 
-              message: 'Title, company, and start date are required for experience' 
+            return res.status(400).json({
+              message: 'Title, company, and start date are required for experience'
             });
           }
         }
@@ -114,8 +125,8 @@ class ProfileController {
           if (profileData.skills[type]) {
             for (const skill of profileData.skills[type]) {
               if (!skill.skill || !skill.level) {
-                return res.status(400).json({ 
-                  message: `Skill name and level are required for ${type} skills` 
+                return res.status(400).json({
+                  message: `Skill name and level are required for ${type} skills`
                 });
               }
             }
@@ -125,7 +136,7 @@ class ProfileController {
 
       logger.info(`Updating profile: ${profileId}`);
       const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
-      
+
       if (!updatedProfile) {
         logger.warn(`Profile not found for update: ${profileId}`);
         return res.status(404).json({ message: 'Profile not found' });
@@ -148,9 +159,9 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Calculating REPS score for user: ${userId}`);
@@ -172,9 +183,9 @@ class ProfileController {
       // Get token from request headers
       const authHeader = req.headers.authorization;
       const token = authHeader?.split(' ')[1];
-      
+
       if (!token) {
-        return res.status(401).json({ message: 'No token provided' });
+        logger.warn('No token provided for this request - some external operations may fail');
       }
 
       logger.info(`Getting completion status for user: ${userId}`);
@@ -183,6 +194,434 @@ class ProfileController {
     } catch (error) {
       logger.error(`Error in getCompletionStatus controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async updateBasicInfo(req, res) {
+    try {
+      const profileId = req.params.id;
+      const basicInfo = req.body;
+
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      // Basic validation for personal info
+      if (basicInfo.name === '' || basicInfo.email === '') {
+        return res.status(400).json({
+          message: 'Name and email cannot be empty'
+        });
+      }
+
+      logger.info(`Updating basic info for profile: ${profileId}`);
+
+      // Create a profile data object with just the personal info
+      const profileData = { personalInfo: basicInfo };
+
+      const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
+
+      if (!updatedProfile) {
+        logger.warn(`Profile not found for basic info update: ${profileId}`);
+        return res.status(404).json({ message: 'Profile not found' });
+      }
+
+      res.json({ data: updatedProfile });
+    } catch (error) {
+      logger.error(`Error in updateBasicInfo controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async updateExperience(req, res) {
+    try {
+      const profileId = req.params.id;
+      const { experience } = req.body;
+
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      // Validate experience entries
+      if (Array.isArray(experience)) {
+        for (const exp of experience) {
+          if (!exp.title || !exp.company || !exp.startDate) {
+            return res.status(400).json({
+              message: 'Title, company, and start date are required for each experience entry'
+            });
+          }
+        }
+      } else {
+        return res.status(400).json({ message: 'Experience must be an array' });
+      }
+
+      logger.info(`Updating experience for profile: ${profileId}`);
+
+      // Create a profile data object with just the experience field
+      const profileData = { experience };
+
+      const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
+
+      if (!updatedProfile) {
+        logger.warn(`Profile not found for experience update: ${profileId}`);
+        return res.status(404).json({ message: 'Profile not found' });
+      }
+
+      res.json({ data: updatedProfile });
+    } catch (error) {
+      logger.error(`Error in updateExperience controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async updateSkills(req, res) {
+    try {
+      const profileId = req.params.id;
+      const { skills } = req.body;
+
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      // Simple validation
+      if (!skills || typeof skills !== 'object') {
+        return res.status(400).json({ message: 'Skills object is required' });
+      }
+
+      logger.info(`Updating skills for profile: ${profileId}`);
+
+      // Create a profile data object with just the skills field
+      const profileData = { skills };
+
+      const updatedProfile = await this.profileService.updateProfile(profileId, profileData, token);
+
+      if (!updatedProfile) {
+        logger.warn(`Profile not found for skills update: ${profileId}`);
+        return res.status(404).json({ message: 'Profile not found' });
+      }
+
+      res.json({ data: updatedProfile });
+    } catch (error) {
+      logger.error(`Error in updateSkills controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async addLanguageAssessment(req, res) {
+    try {
+      const profileId = req.params.id;
+      const assessmentData = req.body;
+
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      // Validate assessment data
+      if (!assessmentData.language || !assessmentData.results) {
+        return res.status(400).json({
+          message: 'Language and assessment results are required'
+        });
+      }
+
+      logger.info(`Adding language assessment for profile: ${profileId}`);
+
+      // Update the profile with the language assessment
+      const updatedProfile = await this.profileService.addLanguageAssessment(profileId, assessmentData, token);
+
+      if (!updatedProfile) {
+        logger.warn(`Profile not found for language assessment: ${profileId}`);
+        return res.status(404).json({ message: 'Profile not found' });
+      }
+
+      res.json({ data: updatedProfile });
+    } catch (error) {
+      logger.error(`Error in addLanguageAssessment controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async addContactCenterAssessment(req, res) {
+    try {
+      const profileId = req.params.id;
+      const { assessment } = req.body;
+
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      // Validate assessment data
+      if (!assessment || !assessment.skill || !assessment.results) {
+        return res.status(400).json({
+          message: 'Assessment must include skill and results'
+        });
+      }
+
+      logger.info(`Adding contact center assessment for profile: ${profileId}`);
+
+      // Update the profile with the contact center assessment
+      const updatedProfile = await this.profileService.addContactCenterAssessment(profileId, assessment, token);
+
+      if (!updatedProfile) {
+        logger.warn(`Profile not found for contact center assessment: ${profileId}`);
+        return res.status(404).json({ message: 'Profile not found' });
+      }
+
+      res.json({ data: updatedProfile });
+    } catch (error) {
+      logger.error(`Error in addContactCenterAssessment controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async checkProfileExists(req, res) {
+    try {
+      const userId = req.params.id || req.user?.id;
+
+      if (!userId) {
+        return res.status(400).json({ message: 'User ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      logger.info(`Checking if profile exists for user: ${userId}`);
+      const exists = await this.profileService.checkProfileExists(userId, token);
+
+      res.json({ exists });
+    } catch (error) {
+      logger.error(`Error in checkProfileExists controller: ${error.message}`, { error });
+      // Return false instead of an error, so frontend can handle gracefully
+      res.json({ exists: false });
+    }
+  }
+
+  async getPlan(req, res) {
+    try {
+      const profileId = req.params.id;
+      if (!profileId) {
+        return res.status(400).json({ message: 'Profile ID is required' });
+      }
+
+      // Get token from request headers
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.split(' ')[1];
+
+      if (!token) {
+        logger.warn('No token provided for this request - some external operations may fail');
+      }
+
+      logger.info(`Retrieving subscription plan for profile: ${profileId}`);
+      const plan = await this.profileService.getPlan(profileId, token);
+
+      if (!plan) {
+        logger.warn(`Plan not found for profile ${profileId}`);
+        return res.status(404).json({ message: 'Plan not found' });
+      }
+
+      res.json(plan);
+    } catch (error) {
+      logger.error(`Error in getPlan controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Internal server error' });
+    }
+  }
+
+  async analyzeExperienceVideo(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No video file provided' });
+      }
+
+      // Reference photo for identity verification (face match vs. profile photo).
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(req.params.id);
+
+      const experienceContext = {
+        title: req.body.title || '',
+        company: req.body.company || '',
+        referencePhotoUrl,
+      };
+
+      logger.info(
+        `Analyzing experience video for profile: ${req.params.id}, experience: "${experienceContext.title}"` +
+          ` (identity reference photo: ${referencePhotoUrl ? 'yes' : 'no'})`
+      );
+
+      const result = await this.videoAnalysisService.analyzeExperienceVideo(
+        req.file.buffer,
+        req.file.mimetype,
+        experienceContext
+      );
+
+      logger.info(`Video analysis complete for profile: ${req.params.id}`);
+
+      // Persist the video + analysis onto the experience entry (best-effort).
+      let saved = false;
+      try {
+        const experienceIndex =
+          req.body.experienceIndex !== undefined ? parseInt(req.body.experienceIndex, 10) : NaN;
+        saved = await this.profileRepository.saveExperienceVideoAnalysis(
+          req.params.id,
+          experienceIndex,
+          result,
+          experienceContext
+        );
+        if (saved) {
+          logger.info(`Saved video analysis to profile ${req.params.id} (experience #${experienceIndex})`);
+        } else {
+          logger.warn(`Could not match experience to persist video analysis for profile ${req.params.id}`);
+        }
+      } catch (persistError) {
+        logger.error(`Failed to persist video analysis for profile ${req.params.id}: ${persistError.message}`);
+      }
+
+      res.json({ data: { ...result, saved } });
+    } catch (error) {
+      // Typed validation errors (e.g. video too short) → 400 with a clear code.
+      if (error?.name === 'VideoValidationError') {
+        logger.warn(`Video validation failed for profile ${req.params.id}: ${error.message}`);
+        return res.status(400).json({
+          message: error.message,
+          code: error.code,
+          details: error.details || {},
+        });
+      }
+      logger.error(`Error in analyzeExperienceVideo controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Video analysis failed', error: error.message });
+    }
+  }
+
+  async analyzeLanguageVideo(req, res) {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: 'No video file provided' });
+      }
+
+      const languageName = String(req.body.languageName || req.body.language || '').trim();
+      const expectedProficiency = String(req.body.expectedProficiency || req.body.proficiency || '').trim();
+
+      if (!languageName) {
+        return res.status(400).json({ message: 'languageName is required' });
+      }
+      if (!expectedProficiency) {
+        return res.status(400).json({ message: 'expectedProficiency is required' });
+      }
+
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(req.params.id);
+
+      const languageContext = {
+        languageName,
+        languageCode: String(req.body.languageCode || req.body.iso639_1 || '').trim(),
+        expectedProficiency,
+        referencePhotoUrl,
+      };
+
+      logger.info(
+        `Queueing language video job for profile: ${req.params.id}, language: "${languageName}" (${expectedProficiency}), size: ${Math.round(req.file.size / 1024)}KB`
+      );
+
+      const job = await LanguageVideoJobService.createJob({
+        profileId: req.params.id,
+        videoBuffer: req.file.buffer,
+        mimetype: req.file.mimetype,
+        languageContext,
+        requestBody: req.body,
+      });
+
+      LanguageVideoJobService.startJob(job._id);
+
+      return res.status(202).json({
+        jobId: job._id,
+        status: 'processing',
+        message: 'Video uploaded. Analysis is running in the background.',
+      });
+    } catch (error) {
+      if (error?.name === 'VideoValidationError') {
+        logger.warn(`Language video validation failed for profile ${req.params.id}: ${error.message}`);
+        return res.status(400).json({
+          message: error.message,
+          code: error.code,
+          details: error.details || {},
+        });
+      }
+      logger.error(`Error in analyzeLanguageVideo controller: ${error.message}`, { error });
+      res.status(500).json({ message: 'Language video analysis failed', error: error.message });
+    }
+  }
+
+  async getLanguageVideoJobStatus(req, res) {
+    try {
+      const job = await LanguageVideoJobService.getJob(req.params.id, req.params.jobId);
+      if (!job) {
+        return res.status(404).json({ message: 'Analysis job not found' });
+      }
+
+      if (job.status === 'queued' || job.status === 'processing') {
+        return res.json({ jobId: job._id, status: job.status });
+      }
+
+      if (job.status === 'failed') {
+        const err = job.error || {};
+        if (err.name === 'VideoValidationError') {
+          return res.status(400).json({
+            status: 'failed',
+            message: err.message,
+            code: err.code,
+            details: err.details || {},
+          });
+        }
+        return res.status(500).json({
+          status: 'failed',
+          message: err.message || 'Language video analysis failed',
+        });
+      }
+
+      return res.json({ status: 'completed', data: job.result });
+    } catch (error) {
+      logger.error(`Error in getLanguageVideoJobStatus: ${error.message}`, { error });
+      res.status(500).json({ message: 'Could not load analysis status' });
     }
   }
 }
