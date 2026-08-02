@@ -13,13 +13,11 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Set environment variables
-ENV PORT=5008
-ENV JWT_SECRET=my_super_secret_key_12345
-ENV REP_PROFILE_API=https://prod-api-repcreationwizard.harx.ai/api 
+JWT_SECRET=your_jwt_secret_key_here
+REP_PROFILE_API=https://v25repscreationwizardbackend-production-bdd2.up.railway.app/api 
+FRONT_URL=https://harxv25dashboardrepfront.netlify.app
+QIANKUN_MAIN_APP_URL=https://harx.ai
 
-# Expose port
-EXPOSE 5008
 
 # Start the application
 CMD ["npm", "start"]
