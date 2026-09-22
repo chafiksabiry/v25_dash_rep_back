@@ -134,13 +134,23 @@ RELEVANCE / OFF-TOPIC CHECK — VERY IMPORTANT:
 - If the transcript is clearly unrelated (random talk, testing the mic, a totally different topic, jokes, silence, advertising, reading something off-topic, etc.), set "relevance.onTopic" to false and give a low "relevance.score". Otherwise set it to true.
 - IMPORTANT: This relevance flag is INFORMATIONAL only. ALWAYS extract every skill, industry and activity that is genuinely evidenced in the transcript, EVEN IF you judged the video off-topic. Do NOT return empty arrays just because relevance is low — only return empty when there is truly no matching evidence.
 
+MATCHING PRIORITY — VERY IMPORTANT:
+- Industries and activities are CRITICAL for mission matching. Prefer a thorough industries + activities extraction over skills.
+- Skills (technical / professional / soft) are only SUGGESTIONS for the rep to confirm later — still extract them when evidenced, but never invent them.
+- If the speech clearly describes a sector/industry (insurance, banking, telecom, SaaS, retail, etc.), map it to the closest INDUSTRIES list entry.
+- If the speech describes day-to-day work, map it to ACTIVITIES generously.
+
 STRICT VOCABULARY RULES — VERY IMPORTANT:
 - For technicalSkills, professionalSkills, softSkills, industries and activities you MUST ONLY use names taken EXACTLY from the predefined lists below.
 - Do NOT invent, rephrase, translate or merge names. Copy them character-for-character from the lists.
 - Only include an item if the transcript provides real evidence the person has it. If nothing matches a list, return an empty array for that field.
 - spokenLanguages and contactCenterSkills are NOT restricted by any list — detect them freely.
 
-ACTIVITIES — DETECT GENEROUSLY:
+INDUSTRIES — DETECT THOROUGHLY (matching-critical):
+- Map the company domain, client type, and market context to the closest INDUSTRIES list entries.
+- Do NOT leave industries empty when the role/company context clearly implies a sector in the list.
+
+ACTIVITIES — DETECT GENEROUSLY (matching-critical):
 - ACTIVITIES describe WHAT the person actually DID day to day (their responsibilities, missions, tasks), e.g. prospecting, advising clients, closing sales, managing quotes, handling support.
 - Read the transcript for any described task or responsibility and map each one to the CLOSEST matching name in the ACTIVITIES list (exact copy).
 - Be thorough: if the person clearly describes doing something that corresponds to an activity in the list, include it even if they don't use the exact wording. Do NOT return an empty activities array when the speech describes concrete work that matches the list.

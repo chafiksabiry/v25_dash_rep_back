@@ -268,7 +268,17 @@ const buildProfileUpdate = (agent, insights) => {
     set['personalInfo.languages'] = Array.from(languageById.values());
   }
 
-  // Skills — add detected skills, keeping the highest level per skill.
+  // Skills from video are PROPOSALS only — never auto-confirm into the profile.
+  // Matching relies on industries/activities; the rep confirms skills in the Skills tab.
+  const proposedSkills = {
+    technical: [],
+    professional: [],
+    soft: [],
+  };
+  const excludedProposed = new Set(
+    (agent?.excludedProposedSkillIds || []).map((id) => String(id))
+  );
+
   ['technical', 'professional', 'soft'].forEach((type) => {
     const detected = skillMaps[type];
     if (!detected || detected.size === 0) return;
@@ -284,16 +294,27 @@ const buildProfileUpdate = (agent, insights) => {
       if (!objectId) return;
       const current = byId.get(id);
       if (current) {
+        // Already confirmed on the profile — only raise the level.
         current.level = Math.max(current.level || 0, level);
-      } else {
-        byId.set(id, { skill: objectId, level, details: VIDEO_SKILL_DETAILS });
+        return;
       }
+      if (excludedProposed.has(id)) return;
+      proposedSkills[type].push({
+        skill: objectId,
+        level,
+        details: VIDEO_SKILL_DETAILS,
+      });
     });
 
-    set[`skills.${type}`] = Array.from(byId.values());
+    // Persist level upgrades for skills the rep already confirmed.
+    if (detected.size > 0) {
+      set[`skills.${type}`] = Array.from(byId.values());
+    }
   });
 
-  // Industries & activities — union of existing + detected.
+  set.proposedSkills = proposedSkills;
+
+  // Industries & activities — union of existing + detected (critical for matching).
   if (industryIds.size > 0) {
     const union = new Map();
     (agent?.professionalSummary?.industries || []).forEach((id) => {

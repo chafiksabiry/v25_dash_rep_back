@@ -252,6 +252,9 @@ class ProfileRepository {
           `tech=${set['skills.technical']?.length || 0}, ` +
           `prof=${set['skills.professional']?.length || 0}, ` +
           `soft=${set['skills.soft']?.length || 0}, ` +
+          `proposedTech=${set.proposedSkills?.technical?.length || 0}, ` +
+          `proposedProf=${set.proposedSkills?.professional?.length || 0}, ` +
+          `proposedSoft=${set.proposedSkills?.soft?.length || 0}, ` +
           `industries=${set['professionalSummary.industries']?.length || 0}, ` +
           `activities=${set['professionalSummary.activities']?.length || 0}`
       );
