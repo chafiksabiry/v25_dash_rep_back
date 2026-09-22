@@ -190,7 +190,7 @@ Scoring rules:
 
 // Dedicated, fine-grained spoken-language assessment built from the transcript
 // and the language Whisper detected. Produces CEFR + sub-scores per language.
-const buildLanguageAssessmentPrompt = (transcription, detectedLanguage, allowedLanguages) => `You are a certified CEFR language examiner.
+const buildLanguageAssessmentPrompt = (transcription, detectedLanguage, allowedLanguages) => `You are a certified CEFR language examiner assessing candidates for professional contact-center / sales work.
 
 Assess the speaker's command of each spoken language based on the transcript of a professional self-introduction video.
 
@@ -201,24 +201,40 @@ TRANSCRIPT:
 
 ${renderAllowedList('KNOWN PLATFORM LANGUAGES (use these exact names when the spoken language matches one)', allowedLanguages)}
 
-ASSESSMENT RULES:
-- Judge ONLY from real linguistic evidence in the transcript (grammar, vocabulary range, sentence complexity, coherence, connectors, register).
-- Pronunciation cannot be measured from text — estimate it conservatively from word choice/coherence and clearly mark lower confidence for it.
+ASSESSMENT RULES (FAIR & PROFESSIONAL — NOT OVERLY HARSH):
+- Judge from real linguistic evidence (grammar, vocabulary range, sentence complexity, coherence, connectors, register).
+- Be encouraging and realistic for short professional intros. A clear, coherent professional sample with few errors SHOULD score well even if brief.
+- Pronunciation cannot be measured perfectly from text — estimate it from word choice/coherence and mark confidence honestly.
 - If the transcript is empty or too short to judge, return an empty "languages" array and set "assessable" to false.
-- Map every score to the CEFR scale honestly: A1 (very basic) → C2 (mastery / native-like).
-- NEVER default to 100. 100 means flawless C2 mastery with rich vocabulary, complex syntax and zero errors across a substantial sample. This is rare.
-- Score STRICTLY from the EVIDENCE AVAILABLE. The amount of speech limits how high you can score:
-  * Very little speech (< 1 full sentence): cap every score at ~40 and use confidence "low".
-  * One or two short sentences: cap around 55-65.
-  * A short paragraph (3-5 sentences): cap around 70-80.
-  * A rich, multi-paragraph, well-structured sample: only then may scores exceed 85.
-- A native-sounding but SHORT or simple statement is NOT 100 — there isn't enough evidence. Reflect that with a lower score AND lower confidence.
-- Each sub-score (fluency, grammar, vocabulary, coherence) must be justified by a concrete observation in "feedback". If you cannot justify it, score it lower.
+- Map scores to CEFR: A1 (very basic) → C2 (mastery / native-like).
+- NEVER default to 100. Reserve 95–100 for exceptionally rich, near-flawless samples.
+- Evidence caps (soft — quality can still score high on shorter clips):
+  * Very little speech (< 1 full sentence): prefer ~50–65, confidence "low".
+  * One or two short sentences that are clear and correct: ~65–80 is fine.
+  * A short paragraph (3–5 clear professional sentences): ~75–90 is expected when quality is good.
+  * A rich, multi-paragraph, well-structured sample: 85–98 is appropriate.
+- Do NOT punish a candidate for being concise if the speech is clear, professional and accurate.
+- Each sub-score (fluency, grammar, vocabulary, coherence) must include concrete feedback. Prefer constructive wording.
 - overallScore must be roughly the average of the sub-scores, not the maximum.
+
+ACCENT / REGIONAL VARIETY — REQUIRED FOR EVERY LANGUAGE:
+- Detect the speaker's accent or regional variety of the language they are speaking.
+- This applies to ALL languages (French, English, Spanish, Arabic, German, Portuguese, etc.).
+- Use category:
+  * "neutral" — standard / broadcast-like / widely understood variety
+  * "mild_regional" — recognizable regional colour, still easy to understand
+  * "strong_regional" — strongly marked regional accent/variety
+  * "non_native" — clear L2 accent of a non-native speaker
+- "variety" must be a bilingual short label naming the variety, e.g.:
+  French: "Neutral / standard French" / "Français neutre / standard", "Northern France", "Quebec French", "Belgian French", "Swiss French", "Maghrebi French"
+  English: "General American", "British (RP)", "Northern England", "Australian", "Indian English"
+  Spanish: "Castilian", "Mexican Spanish", "Rioplatense", "Colombian Spanish"
+  Always adapt labels to the language actually spoken. If unsure, use Neutral/standard with confidence "low".
+- confidence: low|medium|high (transcript-only cues → usually low/medium unless lexical markers are clear).
 
 TONE & LANGUAGE — VERY IMPORTANT:
 - Address the candidate DIRECTLY in the second person (English "You ...", French polite "Vous ...").
-- Every text field ("feedback", "strengths", "areasForImprovement") MUST be a bilingual object { "en": "English", "fr": "français (vouvoiement)" } with equivalent meaning.
+- Every text field ("feedback", "strengths", "areasForImprovement", accent.variety, accent.feedback) MUST be a bilingual object { "en": "English", "fr": "français (vouvoiement)" } with equivalent meaning.
 
 Return ONLY valid JSON (no markdown):
 {
@@ -233,6 +249,12 @@ Return ONLY valid JSON (no markdown):
       "vocabulary": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
       "coherence": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
       "pronunciationEstimate": { "score": 0-100, "confidence": "low|medium|high", "feedback": { "en": "...", "fr": "..." } },
+      "accent": {
+        "category": "neutral|mild_regional|strong_regional|non_native",
+        "variety": { "en": "...", "fr": "..." },
+        "confidence": "low|medium|high",
+        "feedback": { "en": "...", "fr": "..." }
+      },
       "strengths": { "en": "...", "fr": "..." },
       "areasForImprovement": { "en": "...", "fr": "..." }
     }
@@ -246,7 +268,7 @@ const buildTargetLanguageVideoPrompt = (
   targetLanguageCode,
   expectedProficiency,
   allowedLanguages
-) => `You are a certified CEFR language examiner verifying a candidate's proficiency in ONE specific language.
+) => `You are a certified CEFR language examiner verifying a candidate's proficiency in ONE specific language for professional contact-center / sales work.
 
 TARGET LANGUAGE TO VERIFY: ${targetLanguageName}${targetLanguageCode ? ` (${targetLanguageCode})` : ''}
 CLAIMED CEFR LEVEL ON PROFILE: ${expectedProficiency || 'unknown'}
@@ -263,12 +285,19 @@ TASKS — VERY IMPORTANT:
    - Only set matches to true when the transcript is clearly dominated by ${targetLanguageName}.
 2. CEFR ASSESSMENT: Judge ONLY the target language (${targetLanguageName}) from linguistic evidence in the transcript.
 3. CLAIM CHECK: Set "meetsClaimedLevel" to true when the assessed CEFR is at or above the claimed level (${expectedProficiency}), OR exactly one band below on a short sample (leniency). Otherwise false.
+4. ACCENT: Detect accent / regional variety for ${targetLanguageName} (works the same for every language).
 
-SCORING RULES (same strictness as general language assessment):
-- NEVER default to 100. Cap scores by amount of speech evidence.
-- Very little speech (< 1 sentence): cap scores ~40, confidence "low".
-- Short sample: cap ~55-65. Rich sample: may exceed 85.
+SCORING RULES (FAIR — NOT OVERLY HARSH):
+- NEVER default to 100. Reserve 95–100 for exceptionally rich samples.
+- Clear, coherent professional speech with few errors should score well even on a short intro (~75–90).
+- Very little speech (< 1 sentence): prefer ~50–65, confidence "low".
 - overallScore ≈ average of sub-scores.
+- Do not punish brevity when quality is high.
+
+ACCENT / REGIONAL VARIETY:
+- category: neutral | mild_regional | strong_regional | non_native
+- variety: bilingual short label adapted to the language (e.g. Neutral/standard, Northern France, Quebec, General American, Castilian, Mexican Spanish…)
+- confidence: low|medium|high
 
 TONE: Address the candidate directly (English "You ...", French polite "Vous ...").
 All text fields MUST be bilingual { "en": "...", "fr": "..." }.
@@ -288,6 +317,12 @@ Return ONLY valid JSON (no markdown):
   "vocabulary": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
   "coherence": { "score": 0-100, "feedback": { "en": "...", "fr": "..." } },
   "pronunciationEstimate": { "score": 0-100, "confidence": "low|medium|high", "feedback": { "en": "...", "fr": "..." } },
+  "accent": {
+    "category": "neutral|mild_regional|strong_regional|non_native",
+    "variety": { "en": "...", "fr": "..." },
+    "confidence": "low|medium|high",
+    "feedback": { "en": "...", "fr": "..." }
+  },
   "meetsClaimedLevel": true,
   "summary": { "en": "2-3 sentences to the person", "fr": "2-3 phrases avec vouvoiement" }
 }`;
@@ -535,12 +570,10 @@ class VideoAnalysisService {
       return { assessable: false, languages: [] };
     }
 
-    // Server-side guard against score inflation: a credible high score needs a
-    // substantial speech sample. We cap scores by the amount of evidence so a
-    // short clip can never come back as a flat 100%.
+    // Soft evidence caps: short but clear professional clips can still score high.
     const wordCount = transcription.trim().split(/\s+/).filter(Boolean).length;
     const scoreCap = this.evidenceScoreCap(wordCount);
-    const clamp = (v) => Math.max(0, Math.min(scoreCap, Math.round(Number(v) || 0)));
+    const clamp = (v) => Math.max(0, Math.min(scoreCap, this.softenScore(v)));
     const emptyText = { en: '', fr: '' };
     const clampSub = (sub) =>
       sub && typeof sub === 'object'
@@ -562,6 +595,7 @@ class VideoAnalysisService {
         pronunciationEstimate: entry.pronunciationEstimate
           ? { ...entry.pronunciationEstimate, score: clamp(entry.pronunciationEstimate.score), confidence: entry.pronunciationEstimate.confidence || 'low' }
           : { score: 0, confidence: 'low', feedback: { ...emptyText } },
+        accent: this.normalizeAccent(entry.accent, emptyText),
         strengths: entry.strengths || { ...emptyText },
         areasForImprovement: entry.areasForImprovement || { ...emptyText },
         evidenceWords: wordCount,
@@ -636,7 +670,7 @@ class VideoAnalysisService {
 
     const wordCount = transcription.trim().split(/\s+/).filter(Boolean).length;
     const scoreCap = this.evidenceScoreCap(wordCount);
-    const clamp = (v) => Math.max(0, Math.min(scoreCap, Math.round(Number(v) || 0)));
+    const clamp = (v) => Math.max(0, Math.min(scoreCap, this.softenScore(v)));
     const emptyText = { en: '', fr: '' };
     const clampSub = (sub) =>
       sub && typeof sub === 'object'
@@ -670,6 +704,7 @@ class VideoAnalysisService {
             confidence: parsed.pronunciationEstimate.confidence || 'low',
           }
         : { score: 0, confidence: 'low', feedback: { ...emptyText } },
+      accent: this.normalizeAccent(parsed.accent, emptyText),
       meetsClaimedLevel: parsed.meetsClaimedLevel === true,
       summary: parsed.summary || { ...emptyText },
       evidenceWords: wordCount,
@@ -778,14 +813,51 @@ class VideoAnalysisService {
     }
   }
 
-  // Maximum score allowed given how many words of evidence are available.
+  // Mild upward calibration so fair professional samples are not scored too harshly.
+  softenScore(raw) {
+    const n = Math.round(Number(raw) || 0);
+    if (n <= 0) return 0;
+    return Math.min(100, Math.round(n * 1.08 + 5));
+  }
+
+  normalizeAccent(accent, emptyText = { en: '', fr: '' }) {
+    const allowed = new Set(['neutral', 'mild_regional', 'strong_regional', 'non_native']);
+    const category = allowed.has(String(accent?.category || '').toLowerCase())
+      ? String(accent.category).toLowerCase()
+      : 'neutral';
+    const confidence = ['low', 'medium', 'high'].includes(String(accent?.confidence || '').toLowerCase())
+      ? String(accent.confidence).toLowerCase()
+      : 'low';
+    const variety =
+      accent?.variety && typeof accent.variety === 'object'
+        ? {
+            en: accent.variety.en || accent.variety.fr || '',
+            fr: accent.variety.fr || accent.variety.en || '',
+          }
+        : typeof accent?.variety === 'string'
+        ? { en: accent.variety, fr: accent.variety }
+        : {
+            en: category === 'non_native' ? 'Non-native accent' : 'Neutral / standard',
+            fr: category === 'non_native' ? 'Accent non natif' : 'Neutre / standard',
+          };
+    const feedback =
+      accent?.feedback && typeof accent.feedback === 'object'
+        ? {
+            en: accent.feedback.en || accent.feedback.fr || '',
+            fr: accent.feedback.fr || accent.feedback.en || '',
+          }
+        : { ...emptyText };
+    return { category, variety, confidence, feedback };
+  }
+
+  // Soft evidence caps: short clear professional clips can still score high.
   evidenceScoreCap(wordCount) {
-    if (wordCount >= 80) return 100;
-    if (wordCount >= 45) return 88;
-    if (wordCount >= 25) return 78;
-    if (wordCount >= 12) return 65;
-    if (wordCount >= 5) return 50;
-    return 35;
+    if (wordCount >= 60) return 100;
+    if (wordCount >= 35) return 96;
+    if (wordCount >= 20) return 90;
+    if (wordCount >= 12) return 84;
+    if (wordCount >= 6) return 75;
+    return 62;
   }
 
   // Keep the CEFR band consistent with the (capped) overall score. We never
@@ -793,7 +865,7 @@ class VideoAnalysisService {
   scoreToCefr(score, modelCefr) {
     const order = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
     const fromScore =
-      score >= 90 ? 'C2' : score >= 78 ? 'C1' : score >= 65 ? 'B2' : score >= 50 ? 'B1' : score >= 35 ? 'A2' : 'A1';
+      score >= 88 ? 'C2' : score >= 76 ? 'C1' : score >= 62 ? 'B2' : score >= 48 ? 'B1' : score >= 32 ? 'A2' : 'A1';
     if (!modelCefr || !order.includes(modelCefr)) return fromScore;
     // Take the lower of the two so a capped score pulls the band down.
     return order.indexOf(modelCefr) <= order.indexOf(fromScore) ? modelCefr : fromScore;
