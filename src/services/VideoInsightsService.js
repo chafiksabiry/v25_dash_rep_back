@@ -94,6 +94,9 @@ const mergeAssessmentResults = (existing, incoming) => {
   if (!existing) return incoming;
   if (!incoming) return existing;
 
+  const preferIncomingOverall =
+    (incoming.overall?.score || 0) >= (existing.overall?.score || 0);
+
   return {
     completeness: {
       score: maxScore(existing.completeness?.score, incoming.completeness?.score),
@@ -115,14 +118,53 @@ const mergeAssessmentResults = (existing, incoming) => {
     },
     overall: {
       score: maxScore(existing.overall?.score, incoming.overall?.score),
-      strengths: incoming.overall?.score >= (existing.overall?.score || 0)
+      strengths: preferIncomingOverall
         ? incoming.overall?.strengths
         : existing.overall?.strengths,
       areasForImprovement: existing.overall?.areasForImprovement || incoming.overall?.areasForImprovement || '',
     },
     source: incoming.source || existing.source || 'video',
     completedAt: incoming.completedAt || existing.completedAt,
+    // Preserve experience-video linkage (needed by the Languages tab).
+    verifiedProficiency:
+      incoming.verifiedProficiency || existing.verifiedProficiency || null,
+    experienceVideoUrl:
+      incoming.experienceVideoUrl || existing.experienceVideoUrl || null,
+    experienceIndex:
+      typeof incoming.experienceIndex === 'number'
+        ? incoming.experienceIndex
+        : existing.experienceIndex,
+    videoUrl: incoming.videoUrl || existing.videoUrl || null,
+    transcription: incoming.transcription || existing.transcription || null,
   };
+};
+
+/** Normalize a language ref (ObjectId, populated doc, or string) to an id string. */
+const languageRefId = (ref) => {
+  if (!ref) return null;
+  if (typeof ref === 'object') {
+    const id = ref._id || ref.id;
+    return id ? String(id) : null;
+  }
+  const str = String(ref);
+  return str && str !== '[object Object]' ? str : null;
+};
+
+const upsertLangInsight = (langMap, id, data) => {
+  if (!id || !data?.proficiency) return;
+  const current = langMap.get(id);
+  if (!current) {
+    langMap.set(id, data);
+    return;
+  }
+  const keepCurrent = current.score > data.score;
+  langMap.set(id, {
+    proficiency: maxProficiency(current.proficiency, data.proficiency),
+    score: maxScore(current.score, data.score),
+    evidence: keepCurrent ? current.evidence : (data.evidence || current.evidence),
+    experienceVideoUrl: keepCurrent ? current.experienceVideoUrl : data.experienceVideoUrl,
+    experienceIndex: keepCurrent ? current.experienceIndex : data.experienceIndex,
+  });
 };
 
 /**
@@ -144,28 +186,45 @@ const aggregateFromExperiences = (experiences) => {
     const va = exp && exp.videoAnalysis;
     if (!va || typeof va !== 'object') return;
 
+    const experienceVideoUrl = exp.videoUrl || null;
+
     (va.spokenLanguages || []).forEach((entry) => {
       if (!entry || !entry.language) return;
-      const id = String(entry.language._id || entry.language);
+      const id = languageRefId(entry.language);
+      if (!id) return;
       const prof = normalizeProficiency(entry.level, entry.score);
       if (!prof) return;
 
-      const score = typeof entry.score === 'number' ? entry.score : 0;
-      const evidence = flattenText(entry.evidence);
-      const experienceVideoUrl = exp.videoUrl || null;
-      const current = langMap.get(id);
-      if (!current) {
-        langMap.set(id, { proficiency: prof, score, evidence, experienceVideoUrl, experienceIndex: expIndex });
-        return;
-      }
+      upsertLangInsight(langMap, id, {
+        proficiency: prof,
+        score: typeof entry.score === 'number' ? entry.score : 0,
+        evidence: flattenText(entry.evidence),
+        experienceVideoUrl,
+        experienceIndex: expIndex,
+      });
+    });
 
-      const keepCurrent = current.score > score;
-      langMap.set(id, {
-        proficiency: maxProficiency(current.proficiency, prof),
-        score: maxScore(current.score, score),
-        evidence: keepCurrent ? current.evidence : (evidence || current.evidence),
-        experienceVideoUrl: keepCurrent ? current.experienceVideoUrl : experienceVideoUrl,
-        experienceIndex: keepCurrent ? current.experienceIndex : expIndex,
+    // Dedicated CEFR assessment often has the spoken language even when
+    // spokenLanguages was empty / unresolved — critical for Languages-tab verification.
+    const assessedLanguages = exp?.videoLanguageAssessment?.languages;
+    (Array.isArray(assessedLanguages) ? assessedLanguages : []).forEach((entry) => {
+      if (!entry) return;
+      const id = languageRefId(entry.language);
+      if (!id) return;
+      const score = typeof entry.overallScore === 'number' ? entry.overallScore : 0;
+      const prof = normalizeProficiency(entry.cefr, score);
+      if (!prof) return;
+      const evidence =
+        flattenText(entry.strengths) ||
+        flattenText(entry.fluency?.feedback) ||
+        'Detected from experience video analysis';
+
+      upsertLangInsight(langMap, id, {
+        proficiency: prof,
+        score,
+        evidence,
+        experienceVideoUrl,
+        experienceIndex: expIndex,
       });
     });
 
@@ -207,7 +266,8 @@ const buildProfileUpdate = (agent, insights) => {
   const existingLanguages = agent?.personalInfo?.languages || [];
   const languageById = new Map();
   existingLanguages.forEach((lang) => {
-    if (lang && lang.language) languageById.set(String(lang.language), { ...lang });
+    const id = languageRefId(lang?.language);
+    if (id) languageById.set(id, { ...lang });
   });
 
   const excluded = new Set(

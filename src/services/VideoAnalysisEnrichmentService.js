@@ -12,24 +12,38 @@ const toId = (value) => {
   return String(value);
 };
 
-const toMap = (docs) => new Map((docs || []).map((d) => [String(d._id), d.name]));
+const toEntityMap = (docs) =>
+  new Map(
+    (docs || []).map((d) => [
+      String(d._id),
+      {
+        name: d.name,
+        name_i18n: d.name_i18n || null,
+      },
+    ])
+  );
 
 class VideoAnalysisEnrichmentService {
   async loadNameMaps() {
+    const projection = { name: 1, name_i18n: 1 };
     const [technical, professional, soft, industries, activities, languages] = await Promise.all([
-      TechnicalSkill.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
-      ProfessionalSkill.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
-      SoftSkill.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
-      Industry.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
-      Activity.find({ isActive: { $ne: false } }, { name: 1 }).lean(),
-      Language.find({}, { name: 1 }).lean(),
+      TechnicalSkill.find({ isActive: { $ne: false } }, projection).lean(),
+      ProfessionalSkill.find({ isActive: { $ne: false } }, projection).lean(),
+      SoftSkill.find({ isActive: { $ne: false } }, projection).lean(),
+      Industry.find({ isActive: { $ne: false } }, projection).lean(),
+      Activity.find({ isActive: { $ne: false } }, projection).lean(),
+      Language.find({}, { name: 1, name_i18n: 1 }).lean(),
     ]);
 
     return {
-      skill: new Map([...toMap(technical), ...toMap(professional), ...toMap(soft)]),
-      industry: toMap(industries),
-      activity: toMap(activities),
-      language: toMap(languages),
+      skill: new Map([
+        ...toEntityMap(technical),
+        ...toEntityMap(professional),
+        ...toEntityMap(soft),
+      ]),
+      industry: toEntityMap(industries),
+      activity: toEntityMap(activities),
+      language: toEntityMap(languages),
     };
   }
 
@@ -39,11 +53,21 @@ class VideoAnalysisEnrichmentService {
     const populateRef = (items, idField, mapKey) =>
       (Array.isArray(items) ? items : []).map((item) => {
         if (!item) return item;
-        if (typeof item[idField] === 'object' && item[idField]?.name) return item;
+        if (typeof item[idField] === 'object' && item[idField]?.name_i18n) return item;
         const id = toId(item[idField]);
-        const name = id ? maps[mapKey]?.get(id) : null;
-        if (!name) return item;
-        return { ...item, [idField]: { _id: id, name } };
+        const entity = id ? maps[mapKey]?.get(id) : null;
+        if (!entity?.name) return item;
+        return {
+          ...item,
+          [idField]: {
+            _id: id,
+            name: entity.name,
+            ...(entity.name_i18n ? { name_i18n: entity.name_i18n } : {}),
+          },
+          // Keep a flat name for older clients; UI prefers name_i18n via localizeTaxonomyEntity.
+          name: item.name || entity.name,
+          name_i18n: item.name_i18n || entity.name_i18n || null,
+        };
       });
 
     return {

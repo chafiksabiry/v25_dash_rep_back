@@ -101,11 +101,51 @@ const buildLanguageLookup = (items) => {
   const byLower = new Map();
   if (!Array.isArray(items)) return byLower;
 
+  // Common FR/EN aliases so GPT labels still resolve to platform languages.
+  const ALIASES = {
+    anglais: 'english',
+    english: 'english',
+    francais: 'french',
+    français: 'french',
+    french: 'french',
+    espanol: 'spanish',
+    español: 'spanish',
+    spanish: 'spanish',
+    arabe: 'arabic',
+    arabic: 'arabic',
+    allemand: 'german',
+    german: 'german',
+    portugais: 'portuguese',
+    portuguese: 'portuguese',
+    italien: 'italian',
+    italian: 'italian',
+    neerlandais: 'dutch',
+    néerlandais: 'dutch',
+    dutch: 'dutch',
+  };
+
+  const addKey = (key, entry) => {
+    if (!key) return;
+    byLower.set(String(key).toLowerCase().normalize('NFD').replace(/\p{M}/gu, ''), entry);
+  };
+
   items.forEach((item) => {
     if (!item?.id) return;
     const entry = { id: item.id, name: item.name };
-    if (item.name) byLower.set(String(item.name).toLowerCase(), entry);
-    if (item.code) byLower.set(String(item.code).toLowerCase(), entry);
+    addKey(item.name, entry);
+    addKey(item.code, entry);
+    addKey(item.nativeName, entry);
+    if (item.name_i18n && typeof item.name_i18n === 'object') {
+      Object.values(item.name_i18n).forEach((label) => addKey(label, entry));
+    }
+
+    const canonical = ALIASES[String(item.name || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '')]
+      || ALIASES[String(item.code || '').toLowerCase()];
+    if (canonical) {
+      Object.entries(ALIASES).forEach(([alias, target]) => {
+        if (target === canonical) addKey(alias, entry);
+      });
+    }
   });
 
   return byLower;
@@ -510,10 +550,16 @@ class VideoAnalysisService {
     const lookup = buildLanguageLookup(vocabItems);
     if (lookup.size === 0) return [];
 
+    const normalizeKey = (value) =>
+      String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '');
+
     return items
-      .filter((item) => item?.language && lookup.has(String(item.language).toLowerCase()))
+      .filter((item) => item?.language && lookup.has(normalizeKey(item.language)))
       .map((item) => {
-        const entry = lookup.get(String(item.language).toLowerCase());
+        const entry = lookup.get(normalizeKey(item.language));
         return {
           language: { _id: entry.id, name: entry.name },
           level: item.level,
@@ -591,8 +637,13 @@ class VideoAnalysisService {
         : { score: 0, feedback: { ...emptyText } };
 
     const lookup = buildLanguageLookup(vocabLanguages);
+    const normalizeKey = (value) =>
+      String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '');
     const languages = (parsed.languages || []).map((entry) => {
-      const ref = entry?.language ? lookup.get(String(entry.language).toLowerCase()) : null;
+      const ref = entry?.language ? lookup.get(normalizeKey(entry.language)) : null;
       const overallScore = clamp(entry.overallScore);
       return {
         ...(ref ? { language: { _id: ref.id, name: ref.name } } : { languageName: entry.language }),
@@ -901,10 +952,12 @@ class VideoAnalysisService {
 
   // Overwrite each spoken-language detection score with the nuanced, evidence-based
   // overallScore (and CEFR) from the dedicated assessment, matched by id or name.
+  // Also ADD assessed languages that were missing from spokenLanguages (common when
+  // GPT listed the speech language only in the assessment payload).
   mergeAssessmentScores(spokenLanguages, languageAssessment) {
-    if (!Array.isArray(spokenLanguages) || spokenLanguages.length === 0) return spokenLanguages;
+    const spoken = Array.isArray(spokenLanguages) ? [...spokenLanguages] : [];
     const assessed = languageAssessment?.languages || [];
-    if (assessed.length === 0) return spokenLanguages;
+    if (assessed.length === 0) return spoken;
 
     const byId = new Map();
     const byName = new Map();
@@ -915,17 +968,39 @@ class VideoAnalysisService {
       if (name) byName.set(name, a);
     });
 
-    return spokenLanguages.map((lang) => {
+    const matchedIds = new Set();
+    const matchedNames = new Set();
+
+    const merged = spoken.map((lang) => {
       const id = lang.language?._id ? String(lang.language._id) : null;
       const name = (lang.language?.name || '').toLowerCase();
       const match = (id && byId.get(id)) || (name && byName.get(name));
       if (!match) return lang;
+      if (id) matchedIds.add(id);
+      if (name) matchedNames.add(name);
       return {
         ...lang,
         score: match.overallScore,
         level: match.cefr || lang.level,
       };
     });
+
+    assessed.forEach((a) => {
+      const id = a.language?._id ? String(a.language._id) : null;
+      const name = (a.language?.name || a.languageName || '').toLowerCase();
+      if ((id && matchedIds.has(id)) || (name && matchedNames.has(name))) return;
+      if (!a.language?._id && !a.language?.name) return;
+      merged.push({
+        language: a.language?._id
+          ? { _id: a.language._id, name: a.language.name }
+          : a.language,
+        level: a.cefr || 'B1',
+        score: typeof a.overallScore === 'number' ? a.overallScore : 0,
+        evidence: a.strengths || a.fluency?.feedback || undefined,
+      });
+    });
+
+    return merged;
   }
 
   /**
@@ -1113,6 +1188,20 @@ class VideoAnalysisService {
             languageAssessment
           )
         : [];
+
+      // Guarantee the speech language itself is present when GPT named it.
+      if (hasMeaningfulSpeech && parsed.detectedLanguageOfSpeech) {
+        const detectedRefs = this.resolveLanguageRefs(
+          [{ language: parsed.detectedLanguageOfSpeech, level: 'B2', score: 70 }],
+          safeVocab.languages
+        );
+        detectedRefs.forEach((ref) => {
+          const id = ref.language?._id ? String(ref.language._id) : null;
+          if (!id) return;
+          if (spokenLanguages.some((s) => String(s.language?._id || s.language) === id)) return;
+          spokenLanguages.push(ref);
+        });
+      }
 
       // Relevance is now informational only: we ALWAYS extract whatever skills are
       // genuinely evidenced, and keep the relevance flag just to warn the user when

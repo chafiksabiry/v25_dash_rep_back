@@ -6,6 +6,10 @@ const languageSchema = new mongoose.Schema(
     iso639_1: { type: String, trim: true, lowercase: true },
     name: { type: String, required: true, trim: true },
     nativeName: { type: String, trim: true },
+    name_i18n: {
+      en: { type: String, trim: true, default: '' },
+      fr: { type: String, trim: true, default: '' },
+    },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }
