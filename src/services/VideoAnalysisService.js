@@ -678,7 +678,7 @@ class VideoAnalysisService {
         pronunciationEstimate: entry.pronunciationEstimate
           ? { ...entry.pronunciationEstimate, score: clamp(entry.pronunciationEstimate.score), confidence: entry.pronunciationEstimate.confidence || 'low' }
           : { score: 0, confidence: 'low', feedback: { ...emptyText } },
-        accent: this.normalizeAccent(entry.accent, emptyText),
+        accent: this.normalizeAccent(entry.accent, emptyText, 'transcript'),
         strengths: entry.strengths || { ...emptyText },
         areasForImprovement: entry.areasForImprovement || { ...emptyText },
         evidenceWords: wordCount,
@@ -787,7 +787,7 @@ class VideoAnalysisService {
             confidence: parsed.pronunciationEstimate.confidence || 'low',
           }
         : { score: 0, confidence: 'low', feedback: { ...emptyText } },
-      accent: this.normalizeAccent(parsed.accent, emptyText),
+      accent: this.normalizeAccent(parsed.accent, emptyText, 'transcript'),
       meetsClaimedLevel: parsed.meetsClaimedLevel === true,
       summary: parsed.summary || { ...emptyText },
       evidenceWords: wordCount,
@@ -865,7 +865,7 @@ class VideoAnalysisService {
       step(`Whisper done (${transcription?.length ?? 0} chars)`);
 
       step('GPT language assessment + fraud check');
-      const [assessment, fraudCheck] = await Promise.all([
+      const [rawAssessment, fraudCheck] = await Promise.all([
         this.assessTargetLanguage(
           transcription,
           languageName,
@@ -875,9 +875,11 @@ class VideoAnalysisService {
         ),
         this.detectFacesAndFraud(upload.publicId, upload.duration, referencePhotoUrl),
       ]);
+      const heardAccent = await this.assessAccentFromAudio(audioTmpPath, languageName);
+      const assessment = heardAccent ? this.applyHeardAccent(rawAssessment, heardAccent) : rawAssessment;
 
       step(
-        `complete — match=${assessment?.languageMatch?.matches}, cefr=${assessment?.cefr}, score=${assessment?.overallScore}`
+        `complete — match=${assessment?.languageMatch?.matches}, cefr=${assessment?.cefr}, score=${assessment?.overallScore}, accent=${assessment?.accent?.category || 'none'}`
       );
 
       return {
@@ -903,7 +905,97 @@ class VideoAnalysisService {
     return Math.min(100, Math.round(n * 1.08 + 5));
   }
 
-  normalizeAccent(accent, emptyText = { en: '', fr: '' }) {
+  /**
+   * Hear the recording. Whisper's transcript has no accent, so Northern France,
+   * Quebec and the rest cannot be scored from text.
+   */
+  async assessAccentFromAudio(audioPath, languageName) {
+    this._ensureInitialized();
+    if (!audioPath || !fs.existsSync(audioPath)) return null;
+    const bytes = fs.statSync(audioPath).size;
+    if (bytes < 1000 || bytes > 8 * 1024 * 1024) return null;
+
+    const prompt = `You are a phonetician. Listen to this spoken recording and describe the speaker's ACCENT. Do not judge grammar or give a proficiency score.
+
+Spoken language hint: ${languageName || 'detect it from the audio'}
+
+Return ONLY JSON:
+{
+  "category": "neutral|mild_regional|strong_regional|non_native",
+  "variety": { "en": "short variety name", "fr": "nom court de la variété" },
+  "confidence": "low|medium|high",
+  "feedback": { "en": "one sentence to the speaker, You ...", "fr": "une phrase, vouvoiement" }
+}
+
+category:
+- neutral: standard / broadcast, no marked regional colour
+- mild_regional: recognizable but light regional colour
+- strong_regional: clearly marked regional accent
+- non_native: the speaker's first language is different
+
+variety must name the variety, not repeat the category. French examples: "Français neutre / standard", "Nord de la France", "Sud de la France", "Français québécois", "Français belge", "Français suisse", "Français maghrébin", "Français antillais", "Français d'Afrique de l'Ouest". English examples: "General American", "British (RP)", "Northern England". Use the matching label for whatever language you hear. If you are not sure, use neutral and confidence "low".`;
+
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: process.env.OPENAI_AUDIO_MODEL || 'gpt-audio-mini',
+        modalities: ['text'],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: prompt },
+              {
+                type: 'input_audio',
+                input_audio: {
+                  data: fs.readFileSync(audioPath).toString('base64'),
+                  format: 'mp3',
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0,
+      });
+      const text = response.choices?.[0]?.message?.content || '';
+      const jsonText = String(text).replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(jsonText);
+      const accent = parsed?.accent && typeof parsed.accent === 'object' ? parsed.accent : parsed;
+      return this.normalizeAccent(accent, { en: '', fr: '' }, 'audio');
+    } catch (err) {
+      console.error('Audio accent assessment failed:', err.message);
+      return null;
+    }
+  }
+
+  applyHeardAccent(assessment, accent) {
+    if (!assessment || !accent) return assessment;
+    if (Array.isArray(assessment.languages)) {
+      return {
+        ...assessment,
+        languages: assessment.languages.map((entry) => ({ ...entry, accent })),
+      };
+    }
+    return { ...assessment, accent };
+  }
+
+  /**
+   * Download an already-stored experience video's audio and measure its accent.
+   * Does not change CEFR or the sub-scores.
+   */
+  async measureStoredVideoAccent(videoUrl, languageName) {
+    this._ensureInitialized();
+    const publicId = this.cloudinaryVideoPublicId(videoUrl);
+    if (!publicId) return null;
+    let audioPath = null;
+    try {
+      audioPath = await this.downloadToTemp(this.buildAudioUrl(publicId), 'mp3');
+      return await this.assessAccentFromAudio(audioPath, languageName);
+    } finally {
+      if (audioPath && fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+    }
+  }
+
+  normalizeAccent(accent, emptyText = { en: '', fr: '' }, source) {
     const allowed = new Set(['neutral', 'mild_regional', 'strong_regional', 'non_native']);
     const category = allowed.has(String(accent?.category || '').toLowerCase())
       ? String(accent.category).toLowerCase()
@@ -930,7 +1022,10 @@ class VideoAnalysisService {
             fr: accent.feedback.fr || accent.feedback.en || '',
           }
         : { ...emptyText };
-    return { category, variety, confidence, feedback };
+    const heardFrom = source || (accent?.source === 'audio' || accent?.source === 'transcript' ? accent.source : undefined);
+    return heardFrom
+      ? { category, variety, confidence, feedback, source: heardFrom }
+      : { category, variety, confidence, feedback };
   }
 
   // Soft evidence caps: short clear professional clips can still score high.
@@ -1228,9 +1323,16 @@ class VideoAnalysisService {
         this.detectFacesAndFraud(upload.publicId, upload.duration, experienceContext.referencePhotoUrl),
       ]);
 
-      const languageAssessment = hasMeaningfulSpeech
+      let languageAssessment = hasMeaningfulSpeech
         ? rawLanguageAssessment
         : { assessable: false, languages: [] };
+      if (hasMeaningfulSpeech && audioTmpPath) {
+        const heardAccent = await this.assessAccentFromAudio(
+          audioTmpPath,
+          parsed.detectedLanguageOfSpeech
+        );
+        if (heardAccent) languageAssessment = this.applyHeardAccent(languageAssessment, heardAccent);
+      }
 
       // The raw spokenLanguages score is only a detection confidence (≈100 for a
       // native speaker). Replace it with the evidence-based assessment score so the

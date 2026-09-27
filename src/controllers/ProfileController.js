@@ -564,6 +564,65 @@ class ProfileController {
     }
   }
 
+  /**
+   * Measure accent from the stored audio of each experience video.
+   * CEFR and sub-scores stay as they are. Index 0 is included.
+   */
+  async recheckAccents(req, res) {
+    try {
+      const profileId = req.params.id;
+      const experiences = await this.profileRepository.listExperiences(profileId);
+      const results = [];
+
+      for (let index = 0; index < experiences.length; index += 1) {
+        const exp = experiences[index] || {};
+        const assessment = exp.videoLanguageAssessment || {};
+        const languages = Array.isArray(assessment.languages) ? assessment.languages : [];
+        const singleAccent = assessment.accent && !languages.length ? [assessment] : [];
+        const entries = languages.length ? languages : singleAccent;
+        if (!entries.length) {
+          results.push({ index, skipped: true, reason: 'no-language-assessment' });
+          continue;
+        }
+        if (entries.every((entry) => entry?.accent?.source === 'audio')) {
+          results.push({ index, skipped: true, reason: 'already-heard' });
+          continue;
+        }
+
+        const languageName =
+          entries[0]?.language?.name ||
+          entries[0]?.languageName ||
+          assessment.detectedLanguage ||
+          '';
+        const accent = await this.videoAnalysisService.measureStoredVideoAccent(exp.videoUrl, languageName);
+        if (!accent) {
+          results.push({ index, skipped: true, reason: 'accent-unavailable' });
+          continue;
+        }
+
+        const next = languages.length
+          ? { ...assessment, languages: languages.map((entry) => ({ ...entry, accent })) }
+          : { ...assessment, accent };
+        const saved = await this.profileRepository.updateExperienceLanguageAssessment(profileId, index, next);
+        results.push({
+          index,
+          saved,
+          category: accent.category,
+          variety: accent.variety?.fr || accent.variety?.en || '',
+        });
+        logger.info(
+          `Accent recheck profile ${profileId} experience #${index}: ${accent.category} ${accent.variety?.fr || ''}`
+        );
+      }
+
+      const updated = results.filter((row) => row.saved).length;
+      res.json({ updated, total: experiences.length, results });
+    } catch (error) {
+      logger.error(`Error in recheckAccents: ${error.message}`, { error });
+      res.status(500).json({ message: 'Accent recheck failed', error: error.message });
+    }
+  }
+
   async analyzeExperienceVideo(req, res) {
     try {
       if (!req.file) {
