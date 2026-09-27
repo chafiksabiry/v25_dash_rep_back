@@ -26,6 +26,18 @@ class ProfileRepository {
    * Called when the profile photo changes so every existing video is compared
    * to the new photo without re-running the full analysis.
    */
+  async updateExperienceLanguageAssessment(profileId, experienceIndex, languageAssessment) {
+    const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    const res = await Agent.updateOne(this.profileFilter(profileId), {
+      $set: {
+        [`experience.${idx}.videoLanguageAssessment`]:
+          this.sanitizeLanguageAssessmentForStorage(languageAssessment) || {},
+      },
+    });
+    return res.matchedCount > 0;
+  }
+
   async updateExperienceFraudCheck(profileId, experienceIndex, fraudCheck) {
     const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
     if (!Number.isInteger(idx) || idx < 0) return false;
