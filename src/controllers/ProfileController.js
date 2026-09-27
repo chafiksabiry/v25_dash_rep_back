@@ -483,13 +483,13 @@ class ProfileController {
       }
 
       const experiences = await this.profileRepository.listExperiences(profileId);
-      const results = [];
+      const rows = [];
 
       for (let index = 0; index < experiences.length; index += 1) {
         const exp = experiences[index] || {};
         const publicId = this.videoAnalysisService.cloudinaryVideoPublicId(exp.videoUrl);
         if (!publicId) {
-          results.push({ index, skipped: true, reason: 'no-video' });
+          rows.push({ index, skipped: true, reason: 'no-video' });
           continue;
         }
 
@@ -498,21 +498,61 @@ class ProfileController {
           typeof exp.videoDuration === 'number' ? exp.videoDuration : null,
           referencePhotoUrl
         );
+        rows.push({ index, fraudCheck });
+      }
+
+      const anchor = rows.find(
+        (row) =>
+          row.fraudCheck &&
+          row.fraudCheck.identityMatch === true &&
+          (row.fraudCheck.identityConfidence || 0) >= 60
+      );
+      if (anchor) {
+        rows.forEach((row) => {
+          const fraud = row.fraudCheck;
+          if (!fraud) return;
+          const weakNo = fraud.identityMatch === false && (fraud.identityConfidence || 0) < 70;
+          const unsure = fraud.identityMatch == null;
+          const liveSingleFace =
+            fraud.faceDetected === true &&
+            (fraud.faceCount == null || fraud.faceCount <= 1) &&
+            fraud.looksLive === true &&
+            fraud.samePersonAcrossFrames !== false;
+          if (!(weakNo || unsure) || !liveSingleFace) return;
+          const mismatch = /profile photo|photo de profil/i;
+          row.fraudCheck = {
+            ...fraud,
+            identityMatch: true,
+            identityConfidence: Math.max(fraud.identityConfidence || 0, 60),
+            fraudRisk: 'low',
+            reasons: (fraud.reasons || []).filter(
+              (reason) => !mismatch.test(`${reason?.en || ''} ${reason?.fr || ''}`)
+            ),
+          };
+        });
+      }
+
+      const results = [];
+      for (const row of rows) {
+        if (!row.fraudCheck) {
+          results.push({ index: row.index, skipped: true, reason: row.reason || 'no-video' });
+          continue;
+        }
         const saved = await this.profileRepository.updateExperienceFraudCheck(
           profileId,
-          index,
-          fraudCheck
+          row.index,
+          row.fraudCheck
         );
         results.push({
-          index,
+          index: row.index,
           saved,
-          identityMatch: fraudCheck.identityMatch,
-          identityConfidence: fraudCheck.identityConfidence,
-          fraudRisk: fraudCheck.fraudRisk,
+          identityMatch: row.fraudCheck.identityMatch,
+          identityConfidence: row.fraudCheck.identityConfidence,
+          fraudRisk: row.fraudCheck.fraudRisk,
         });
         logger.info(
-          `Identity recheck profile ${profileId} experience #${index}: ` +
-            `match=${fraudCheck.identityMatch} confidence=${fraudCheck.identityConfidence} risk=${fraudCheck.fraudRisk}`
+          `Identity recheck profile ${profileId} experience #${row.index}: ` +
+            `match=${row.fraudCheck.identityMatch} confidence=${row.fraudCheck.identityConfidence} risk=${row.fraudCheck.fraudRisk}`
         );
       }
 
