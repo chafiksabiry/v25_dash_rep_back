@@ -12,6 +12,29 @@ class ProfileRepository {
     return Profile.findOne({ userId });
   }
 
+  profileFilter(profileId) {
+    return mongoose.isValidObjectId(profileId) ? { _id: profileId } : { userId: profileId };
+  }
+
+  async listExperiences(profileId) {
+    const agent = await Agent.findOne(this.profileFilter(profileId), { experience: 1 }).lean();
+    return Array.isArray(agent?.experience) ? agent.experience : [];
+  }
+
+  /**
+   * Replace only the anti-fraud block of one experience, including index 0.
+   * Called when the profile photo changes so every existing video is compared
+   * to the new photo without re-running the full analysis.
+   */
+  async updateExperienceFraudCheck(profileId, experienceIndex, fraudCheck) {
+    const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    const res = await Agent.updateOne(this.profileFilter(profileId), {
+      $set: { [`experience.${idx}.videoFraudCheck`]: fraudCheck || {} },
+    });
+    return res.matchedCount > 0;
+  }
+
   /**
    * Fetch the agent's profile photo URL (used as the identity reference when
    * verifying that the person in the experience video matches the account).

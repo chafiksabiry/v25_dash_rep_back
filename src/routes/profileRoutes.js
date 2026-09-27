@@ -69,6 +69,9 @@ router.get('/completion-status', profileController.getCompletionStatus.bind(prof
 // Get user's subscription plan
 router.get('/:id/plan', profileController.getPlan.bind(profileController));
 
+// Re-compare every experience video (including the first) to the current profile photo.
+router.post('/:id/identity/recheck', profileController.recheckIdentity.bind(profileController));
+
 // Analyze experience video with AI (Whisper + GPT-4)
 router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
