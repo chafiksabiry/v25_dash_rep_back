@@ -469,6 +469,61 @@ class ProfileController {
     }
   }
 
+  /**
+   * Re-run the face/identity check of every experience video against the
+   * current profile photo. Index 0 is included: a falsy index must not skip
+   * the first experience.
+   */
+  async recheckIdentity(req, res) {
+    try {
+      const profileId = req.params.id;
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(profileId);
+      if (!referencePhotoUrl) {
+        return res.status(400).json({ message: 'No profile photo to compare against' });
+      }
+
+      const experiences = await this.profileRepository.listExperiences(profileId);
+      const results = [];
+
+      for (let index = 0; index < experiences.length; index += 1) {
+        const exp = experiences[index] || {};
+        const publicId = this.videoAnalysisService.cloudinaryVideoPublicId(exp.videoUrl);
+        if (!publicId) {
+          results.push({ index, skipped: true, reason: 'no-video' });
+          continue;
+        }
+
+        const fraudCheck = await this.videoAnalysisService.detectFacesAndFraud(
+          publicId,
+          typeof exp.videoDuration === 'number' ? exp.videoDuration : null,
+          referencePhotoUrl
+        );
+        const saved = await this.profileRepository.updateExperienceFraudCheck(
+          profileId,
+          index,
+          fraudCheck
+        );
+        results.push({
+          index,
+          saved,
+          identityMatch: fraudCheck.identityMatch,
+          identityConfidence: fraudCheck.identityConfidence,
+          fraudRisk: fraudCheck.fraudRisk,
+        });
+        logger.info(
+          `Identity recheck profile ${profileId} experience #${index}: ` +
+            `match=${fraudCheck.identityMatch} confidence=${fraudCheck.identityConfidence} risk=${fraudCheck.fraudRisk}`
+        );
+      }
+
+      const updated = results.filter((row) => row.saved).length;
+      res.json({ updated, total: experiences.length, results });
+    } catch (error) {
+      logger.error(`Error in recheckIdentity: ${error.message}`, { error });
+      res.status(500).json({ message: 'Identity recheck failed', error: error.message });
+    }
+  }
+
   async analyzeExperienceVideo(req, res) {
     try {
       if (!req.file) {

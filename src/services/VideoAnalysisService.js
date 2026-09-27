@@ -478,6 +478,27 @@ class VideoAnalysisService {
     });
   }
 
+  /**
+   * Cloudinary public id from a stored experience video URL.
+   * `.../video/upload/v123/experience-videos/exp-1.webm` → `experience-videos/exp-1`.
+   */
+  cloudinaryVideoPublicId(url) {
+    if (!url || typeof url !== 'string' || !url.includes('/video/upload/')) return null;
+    const after = url.split('/video/upload/')[1];
+    if (!after) return null;
+    const segments = after.split('?')[0].split('/').filter(Boolean);
+    const versionAt = segments.findIndex((segment) => /^v\d+$/.test(segment));
+    const idSegments = (versionAt >= 0 ? segments.slice(versionAt + 1) : segments).filter(
+      (segment) => segment && !segment.includes(',')
+    );
+    if (!idSegments.length) return null;
+    const last = idSegments[idSegments.length - 1];
+    const dot = last.lastIndexOf('.');
+    if (dot > 0) idSegments[idSegments.length - 1] = last.slice(0, dot);
+    const publicId = idSegments.join('/');
+    return publicId || null;
+  }
+
   /** URL Cloudinary d'une image (frame) extraite de la vidéo à un offset donné. */
   buildFrameUrl(publicId, offsetSeconds) {
     return cloudinary.url(publicId, {
@@ -1070,6 +1091,7 @@ class VideoAnalysisService {
         identityMatch,
         identityConfidence,
         identityChecked: hasReference,
+        referencePhotoUrl: referencePhotoUrl || null,
         fraudRisk,
         reasons,
         checkedFrames: offsets.length,
@@ -1085,6 +1107,7 @@ class VideoAnalysisService {
         identityMatch: null,
         identityConfidence: 0,
         identityChecked: hasReference,
+        referencePhotoUrl: referencePhotoUrl || null,
         fraudRisk: 'unknown',
         reasons: [{ en: 'Anti-fraud check could not be completed.', fr: 'La vérification anti-fraude n’a pas pu être effectuée.' }],
         checkedFrames: 0,
