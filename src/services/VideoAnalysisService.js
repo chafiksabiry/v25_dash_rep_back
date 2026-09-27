@@ -1083,9 +1083,19 @@ class VideoAnalysisService {
       let resolvedMatch = identityMatch;
       let resolvedConfidence = identityConfidence;
       if (hasReference && resolvedMatch === false && resolvedConfidence < 70) {
-        resolvedMatch = null;
-        const liveFace = parsed.faceDetected === true && parsed.looksLive === true;
-        fraudRisk = liveFace ? 'low' : fraudRisk === 'high' ? 'medium' : fraudRisk;
+        const liveSingleFace =
+          parsed.faceDetected === true &&
+          (typeof parsed.faceCount !== 'number' || parsed.faceCount <= 1) &&
+          parsed.looksLive === true &&
+          parsed.samePersonAcrossFrames !== false;
+        if (liveSingleFace) {
+          resolvedMatch = true;
+          resolvedConfidence = Math.max(resolvedConfidence, 60);
+          fraudRisk = 'low';
+        } else {
+          resolvedMatch = null;
+          fraudRisk = fraudRisk === 'high' ? 'medium' : fraudRisk;
+        }
       }
 
       if (hasReference && resolvedMatch !== false) {
