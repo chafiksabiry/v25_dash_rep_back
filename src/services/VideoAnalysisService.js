@@ -395,7 +395,7 @@ Check for signs of fraud or non-genuine recordings:
 - Any obvious manipulation, overlays, or spoofing artifacts?
 ${
   hasReference
-    ? `- IDENTITY MATCH: Is the person in the video frames the SAME person as in the profile photo? Compare facial features (face shape, eyes, nose, mouth, overall appearance). Ignore differences in lighting, angle, hairstyle, beard length, glasses or clothing. Set "identityMatch" accordingly and give "identityConfidence" (0-100). If you cannot see a face in either the photo or the video, set "identityMatch" to null.`
+    ? `- IDENTITY MATCH: Is the person in the video frames the SAME person as in the profile photo? Compare facial features (face shape, eyes, nose, mouth, overall appearance). Ignore lighting, camera angle, hairstyle, beard length, glasses (including sunglasses pushed up on the head), and clothing. Set "identityMatch" to true when it is the same person. Set "identityMatch" to false ONLY when you are sure it is a different person, and then set "identityConfidence" to at least 70. If the face is unclear, partial, or you are not sure, set "identityMatch" to null and "identityConfidence" below 50.`
     : '- No reference photo was provided, so set "identityMatch" to null and "identityConfidence" to 0.'
 }
 
@@ -505,10 +505,11 @@ class VideoAnalysisService {
       resource_type: 'video',
       format: 'jpg',
       start_offset: String(Math.max(0, Math.floor(offsetSeconds))),
-      width: 640,
-      height: 640,
-      crop: 'limit',
-      quality: 'auto',
+      width: 768,
+      height: 768,
+      crop: 'fill',
+      gravity: 'face',
+      quality: 'auto:good',
     });
   }
 
@@ -1030,22 +1031,26 @@ class VideoAnalysisService {
    * Fails open (returns a neutral result) if anything goes wrong so a transient
    * vision error never blocks a legitimate analysis.
    */
+  frameOffsets(duration) {
+    let seconds = typeof duration === 'number' && duration > 0 ? duration : 8;
+    // Some older clips stored the length in milliseconds.
+    if (seconds > 600) seconds = seconds / 1000;
+    const last = Math.max(0, Math.floor(seconds) - 1);
+    const points = [0.2, 0.5, 0.8].map((ratio) => Math.min(Math.floor(seconds * ratio), last));
+    return [...new Set(points)];
+  }
+
   async detectFacesAndFraud(publicId, duration, referencePhotoUrl = null) {
-    const safeDuration = typeof duration === 'number' && duration > 0 ? duration : 30;
-    const offsets = [
-      Math.floor(safeDuration * 0.15),
-      Math.floor(safeDuration * 0.5),
-      Math.floor(safeDuration * 0.85),
-    ];
+    const offsets = this.frameOffsets(duration);
 
     const hasReference = Boolean(referencePhotoUrl);
     const frameContent = offsets.map((offset) => ({
       type: 'image_url',
-      image_url: { url: this.buildFrameUrl(publicId, offset), detail: 'low' },
+      image_url: { url: this.buildFrameUrl(publicId, offset), detail: 'high' },
     }));
     // Reference profile photo goes FIRST so the prompt can address it as image #1.
     const imageContent = hasReference
-      ? [{ type: 'image_url', image_url: { url: referencePhotoUrl, detail: 'low' } }, ...frameContent]
+      ? [{ type: 'image_url', image_url: { url: referencePhotoUrl, detail: 'high' } }, ...frameContent]
       : frameContent;
 
     try {
@@ -1073,8 +1078,24 @@ class VideoAnalysisService {
       let fraudRisk = ['low', 'medium', 'high'].includes(parsed.fraudRisk) ? parsed.fraudRisk : 'medium';
       const reasons = Array.isArray(parsed.reasons) ? parsed.reasons : [];
 
-      // A confirmed identity mismatch against the profile photo is a strong fraud signal.
-      if (hasReference && identityMatch === false) {
+      // A low score means the model is unsure (angle, sunglasses, short clip), not that
+      // it is a different person. Only a confident mismatch is fraud.
+      let resolvedMatch = identityMatch;
+      let resolvedConfidence = identityConfidence;
+      if (hasReference && resolvedMatch === false && resolvedConfidence < 70) {
+        resolvedMatch = null;
+        const liveFace = parsed.faceDetected === true && parsed.looksLive === true;
+        fraudRisk = liveFace ? 'low' : fraudRisk === 'high' ? 'medium' : fraudRisk;
+      }
+
+      if (hasReference && resolvedMatch !== false) {
+        const mismatch = /profile photo|photo de profil/i;
+        const kept = reasons.filter((reason) => !mismatch.test(`${reason?.en || ''} ${reason?.fr || ''}`));
+        reasons.length = 0;
+        reasons.push(...kept);
+      }
+
+      if (hasReference && resolvedMatch === false && resolvedConfidence >= 70) {
         fraudRisk = 'high';
         reasons.unshift({
           en: 'The person in the video does not match your profile photo.',
@@ -1088,8 +1109,8 @@ class VideoAnalysisService {
         samePersonAcrossFrames: parsed.samePersonAcrossFrames !== false,
         looksLive: parsed.looksLive === true,
         livenessConfidence: typeof parsed.livenessConfidence === 'number' ? parsed.livenessConfidence : 0,
-        identityMatch,
-        identityConfidence,
+        identityMatch: resolvedMatch,
+        identityConfidence: resolvedConfidence,
         identityChecked: hasReference,
         referencePhotoUrl: referencePhotoUrl || null,
         fraudRisk,
