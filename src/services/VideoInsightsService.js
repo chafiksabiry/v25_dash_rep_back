@@ -262,7 +262,9 @@ const buildProfileUpdate = (agent, insights) => {
   const set = {};
   const { langMap, skillMaps, industryIds, activityIds } = insights;
 
-  // Languages — keep existing assessment data, raise proficiency & scores to max.
+  // Languages — keep existing CV / manual entries; ADD languages detected in
+  // experience videos (never replace the CV list wholesale). For duplicates,
+  // the higher proficiency / skill level wins (additive, never destructive).
   const existingLanguages = agent?.personalInfo?.languages || [];
   const languageById = new Map();
   existingLanguages.forEach((lang) => {

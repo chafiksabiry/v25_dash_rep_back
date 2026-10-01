@@ -635,6 +635,22 @@ class ProfileController {
       const experienceContext = {
         title: req.body.title || '',
         company: req.body.company || '',
+        description: req.body.description || '',
+        responsibilities: (() => {
+          if (Array.isArray(req.body.responsibilities)) return req.body.responsibilities;
+          if (typeof req.body.responsibilities === 'string' && req.body.responsibilities.trim()) {
+            try {
+              const parsed = JSON.parse(req.body.responsibilities);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {
+              return req.body.responsibilities
+                .split(/\n|;|•/)
+                .map((r) => r.trim())
+                .filter(Boolean);
+            }
+          }
+          return [];
+        })(),
         referencePhotoUrl,
       };
 
