@@ -1080,11 +1080,15 @@ class VideoAnalysisService {
     }
   }
 
-  // Mild upward calibration so fair professional samples are not scored too harshly.
+  // Mild upward calibration — never invent mastery (95+) from a mid/high sample.
   softenScore(raw) {
     const n = Math.round(Number(raw) || 0);
     if (n <= 0) return 0;
-    return Math.min(100, Math.round(n * 1.08 + 5));
+    const lifted = Math.round(n * 1.03 + 2);
+    // Keep C1 ceiling below the C2 reserved band; only true excellence hits 95+.
+    if (n < 90) return Math.min(92, lifted);
+    if (n < 95) return Math.min(96, lifted);
+    return Math.min(100, n);
   }
 
   /**
@@ -1325,7 +1329,7 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
   scoreToCefr(score, modelCefr) {
     const order = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
     const fromScore =
-      score >= 88 ? 'C2' : score >= 76 ? 'C1' : score >= 62 ? 'B2' : score >= 48 ? 'B1' : score >= 32 ? 'A2' : 'A1';
+      score >= 93 ? 'C2' : score >= 82 ? 'C1' : score >= 68 ? 'B2' : score >= 53 ? 'B1' : score >= 39 ? 'A2' : 'A1';
     if (!modelCefr || !order.includes(modelCefr)) return fromScore;
     // Take the lower of the two so a capped score pulls the band down.
     return order.indexOf(modelCefr) <= order.indexOf(fromScore) ? modelCefr : fromScore;
