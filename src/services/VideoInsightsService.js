@@ -32,11 +32,11 @@ const normalizeProficiency = (level, score) => {
   }
 
   if (typeof score === 'number') {
-    if (score >= 95) return 'C2';
-    if (score >= 85) return 'C1';
-    if (score >= 70) return 'B2';
-    if (score >= 55) return 'B1';
-    if (score >= 40) return 'A2';
+    if (score >= 93) return 'C2';
+    if (score >= 82) return 'C1';
+    if (score >= 68) return 'B2';
+    if (score >= 53) return 'B1';
+    if (score >= 39) return 'A2';
     return 'A1';
   }
 
@@ -71,11 +71,22 @@ const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) =
   const safeScore = typeof score === 'number' ? Math.round(score) : 0;
   const feedback = evidence || 'Detected from experience video analysis';
   const verifiedProficiency = extra.verifiedProficiency || proficiency || null;
+  const pick = (value, fallback = safeScore) =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
 
   return {
-    completeness: { score: safeScore, feedback },
-    fluency: { score: safeScore, feedback },
-    proficiency: { score: safeScore, feedback },
+    completeness: {
+      score: pick(extra.completenessScore),
+      feedback: extra.completenessFeedback || feedback,
+    },
+    fluency: {
+      score: pick(extra.fluencyScore),
+      feedback: extra.fluencyFeedback || feedback,
+    },
+    proficiency: {
+      score: pick(extra.proficiencyScore),
+      feedback: extra.proficiencyFeedback || feedback,
+    },
     overall: {
       score: safeScore,
       strengths: verifiedProficiency
@@ -86,7 +97,10 @@ const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) =
     verifiedProficiency,
     source: extra.source || 'video',
     completedAt: new Date(),
-    ...extra,
+    experienceVideoUrl: extra.experienceVideoUrl || null,
+    experienceIndex: typeof extra.experienceIndex === 'number' ? extra.experienceIndex : null,
+    videoUrl: extra.videoUrl || null,
+    transcription: extra.transcription || null,
   };
 };
 
@@ -158,12 +172,24 @@ const upsertLangInsight = (langMap, id, data) => {
     return;
   }
   const keepCurrent = current.score > data.score;
+  const winner = keepCurrent ? current : data;
   langMap.set(id, {
     proficiency: maxProficiency(current.proficiency, data.proficiency),
     score: maxScore(current.score, data.score),
-    evidence: keepCurrent ? current.evidence : (data.evidence || current.evidence),
-    experienceVideoUrl: keepCurrent ? current.experienceVideoUrl : data.experienceVideoUrl,
-    experienceIndex: keepCurrent ? current.experienceIndex : data.experienceIndex,
+    evidence: winner.evidence || current.evidence || data.evidence,
+    experienceVideoUrl: winner.experienceVideoUrl || current.experienceVideoUrl || data.experienceVideoUrl,
+    experienceIndex:
+      typeof winner.experienceIndex === 'number'
+        ? winner.experienceIndex
+        : current.experienceIndex ?? data.experienceIndex,
+    fluencyScore: maxScore(current.fluencyScore, data.fluencyScore),
+    fluencyFeedback: winner.fluencyFeedback || current.fluencyFeedback || data.fluencyFeedback,
+    proficiencyScore: maxScore(current.proficiencyScore, data.proficiencyScore),
+    proficiencyFeedback:
+      winner.proficiencyFeedback || current.proficiencyFeedback || data.proficiencyFeedback,
+    completenessScore: maxScore(current.completenessScore, data.completenessScore),
+    completenessFeedback:
+      winner.completenessFeedback || current.completenessFeedback || data.completenessFeedback,
   });
 };
 
@@ -225,6 +251,30 @@ const aggregateFromExperiences = (experiences) => {
         evidence,
         experienceVideoUrl,
         experienceIndex: expIndex,
+        fluencyScore: typeof entry.fluency?.score === 'number' ? entry.fluency.score : score,
+        fluencyFeedback: flattenText(entry.fluency?.feedback) || evidence,
+        // "Niveau" maps from grammar when available (closest CEFR signal).
+        proficiencyScore:
+          typeof entry.grammar?.score === 'number'
+            ? entry.grammar.score
+            : typeof entry.vocabulary?.score === 'number'
+              ? entry.vocabulary.score
+              : score,
+        proficiencyFeedback:
+          flattenText(entry.grammar?.feedback) ||
+          flattenText(entry.vocabulary?.feedback) ||
+          evidence,
+        // "Complét." maps from coherence / vocabulary coverage of the sample.
+        completenessScore:
+          typeof entry.coherence?.score === 'number'
+            ? entry.coherence.score
+            : typeof entry.vocabulary?.score === 'number'
+              ? entry.vocabulary.score
+              : score,
+        completenessFeedback:
+          flattenText(entry.coherence?.feedback) ||
+          flattenText(entry.vocabulary?.feedback) ||
+          evidence,
       });
     });
 
@@ -294,6 +344,12 @@ const buildProfileUpdate = (agent, insights) => {
       verifiedProficiency: data.proficiency,
       experienceVideoUrl: data.experienceVideoUrl || null,
       experienceIndex: typeof data.experienceIndex === 'number' ? data.experienceIndex : null,
+      fluencyScore: data.fluencyScore,
+      fluencyFeedback: data.fluencyFeedback,
+      proficiencyScore: data.proficiencyScore,
+      proficiencyFeedback: data.proficiencyFeedback,
+      completenessScore: data.completenessScore,
+      completenessFeedback: data.completenessFeedback,
     });
 
     if (existing) {
