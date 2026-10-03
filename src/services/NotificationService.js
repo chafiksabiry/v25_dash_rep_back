@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const RepNotification = require('../models/RepNotification');
 const logger = require('../utils/logger');
+const { broadcastNotificationUpdate } = require('../websocket/notificationUpdates');
 
 function toObjectId(value) {
   const s = String(value || '').trim();
@@ -57,7 +58,21 @@ class NotificationService {
       { upsert: true, new: true, lean: true }
     );
 
-    return { notification: doc, created: !existing };
+    const created = !existing;
+    if (created) {
+      try {
+        broadcastNotificationUpdate({
+          type: 'notification',
+          repId: String(repId),
+          created: true,
+          notification: this.serialize(doc),
+        });
+      } catch (err) {
+        logger.warn(`Notification WS broadcast failed: ${err?.message || err}`);
+      }
+    }
+
+    return { notification: doc, created };
   }
 
   async setRead(repId, notificationId, read) {
