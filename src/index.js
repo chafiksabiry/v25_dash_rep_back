@@ -103,10 +103,12 @@ app.get('/health', (req, res) => {
 app.use(errorHandler);
 
 // Start server (long timeouts for large uploads; language analysis runs async after 202)
+const { setupNotificationWebSocket } = require('./websocket/notificationUpdates');
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
 });
+setupNotificationWebSocket(server);
 server.timeout = 10 * 60 * 1000;
 server.keepAliveTimeout = 10 * 60 * 1000 + 5000;
 server.headersTimeout = 10 * 60 * 1000 + 10000;
