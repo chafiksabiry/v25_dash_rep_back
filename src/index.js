@@ -12,16 +12,18 @@ const logger = require('./utils/logger');
 // Load environment variables
 dotenv.config();
 
-// Connect to MongoDB (shared HARX database) for reading reference collections
-// (skills, industries, activities). Non-fatal: the server still starts if the
-// connection fails so existing HTTP-based features keep working.
-if (process.env.MONGO_URI) {
+// Connect to MongoDB (shared HARX database — same one v25_repscreationwizard_backend
+// writes rep profiles to, via MONGODB_URI). This is also where the Agent model used
+// by ProfileRepository reads/writes profile + experience data, so it must point at
+// the same database as the wizard backend, not a separate MONGO_URI value.
+const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
+if (mongoUri) {
   mongoose
-    .connect(process.env.MONGO_URI)
+    .connect(mongoUri)
     .then(() => logger.info('Connected to MongoDB'))
     .catch((err) => logger.error(`MongoDB connection failed: ${err.message}`));
 } else {
-  logger.warn('MONGO_URI not set — reference collections (skills/industries/activities) will be unavailable');
+  logger.warn('MONGODB_URI not set — profile data and reference collections (skills/industries/activities) will be unavailable');
 }
 
 const app = express();
