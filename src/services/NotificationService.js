@@ -12,7 +12,7 @@ class NotificationService {
   async listByRep(repId, { unreadOnly = false, limit = 100 } = {}) {
     const oid = toObjectId(repId);
     if (!oid) return [];
-    const query = { repId: oid };
+    const query = { repId: oid, dismissed: { $ne: true } };
     if (unreadOnly) query.read = false;
     return RepNotification.find(query)
       .sort({ createdAt: -1 })
@@ -23,7 +23,7 @@ class NotificationService {
   async unreadCount(repId) {
     const oid = toObjectId(repId);
     if (!oid) return 0;
-    return RepNotification.countDocuments({ repId: oid, read: false });
+    return RepNotification.countDocuments({ repId: oid, read: false, dismissed: { $ne: true } });
   }
 
   async upsert(repId, payload) {
@@ -85,21 +85,32 @@ class NotificationService {
     const repOid = toObjectId(repId);
     const notifOid = toObjectId(notificationId);
     if (!repOid || !notifOid) return null;
-    return RepNotification.findOneAndDelete({ _id: notifOid, repId: repOid }).lean();
+    return RepNotification.findOneAndUpdate(
+      { _id: notifOid, repId: repOid },
+      { $set: { dismissed: true, dismissedAt: new Date() } },
+      { new: true, lean: true }
+    );
   }
 
   async removeByKey(repId, notificationKey) {
     const repOid = toObjectId(repId);
     const key = String(notificationKey || '').trim();
     if (!repOid || !key) return null;
-    return RepNotification.findOneAndDelete({ repId: repOid, notificationKey: key }).lean();
+    return RepNotification.findOneAndUpdate(
+      { repId: repOid, notificationKey: key },
+      { $set: { dismissed: true, dismissedAt: new Date() } },
+      { new: true, lean: true }
+    );
   }
 
   async clearAll(repId) {
     const oid = toObjectId(repId);
     if (!oid) return { deletedCount: 0 };
-    const result = await RepNotification.deleteMany({ repId: oid });
-    return { deletedCount: result.deletedCount || 0 };
+    const result = await RepNotification.updateMany(
+      { repId: oid, dismissed: { $ne: true } },
+      { $set: { dismissed: true, dismissedAt: new Date() } }
+    );
+    return { deletedCount: result.modifiedCount || 0 };
   }
 
   serialize(doc) {

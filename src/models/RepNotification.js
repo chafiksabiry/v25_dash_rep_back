@@ -25,6 +25,11 @@ const repNotificationSchema = new mongoose.Schema(
     message: { type: String, required: true, trim: true },
     actionPath: { type: String, trim: true },
     read: { type: Boolean, default: false },
+    /** Rep explicitly dismissed this notification — hidden from the list and
+     *  never recreated by a backfill sync (e.g. the still-enrolled-gigs
+     *  poll), unlike a hard delete which that same poll would just undo. */
+    dismissed: { type: Boolean, default: false },
+    dismissedAt: { type: Date },
   },
   {
     timestamps: true,
