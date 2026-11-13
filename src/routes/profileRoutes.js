@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const ProfileController = require('../controllers/ProfileController');
 const { authenticateToken } = require('../middleware/auth');
-const jwt = require('jsonwebtoken');
+const { requireProfileOwnership } = require('../middleware/ownership');
 
 const videoUpload = multer({
   storage: multer.memoryStorage(),
@@ -16,18 +16,7 @@ const videoUpload = multer({
 const router = express.Router();
 const profileController = new ProfileController();
 
-// Test route to generate a JWT token (only for development)
-router.get('/generate-test-token/:userId', (req, res) => {
-  const userId = req.params.userId;
-  const token = jwt.sign(
-    { userId: userId }, 
-    process.env.JWT_SECRET || 'my_super_secret_key_12345'
-   /*  { expiresIn: '1h' } */
-  );
-  res.json({ token });
-});
-
-// All other routes require authentication
+// All routes require authentication
 router.use(authenticateToken);
 
 // Get profile
@@ -76,7 +65,7 @@ router.post('/:id/identity/recheck', profileController.recheckIdentity.bind(prof
 router.post('/:id/language/accent/recheck', profileController.recheckAccents.bind(profileController));
 
 // Analyze experience video with AI (Whisper + GPT-4)
-router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
+router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
 // Analyze the personal presentation video (no experience context): persists under
 // personalInfo.presentationVideo.* and merges detected skills/sectors/languages.
@@ -105,6 +94,7 @@ router.get(
 // Analyze dedicated language verification video (Languages tab — not experience onboarding)
 router.post(
   '/:id/language/analyze-video',
+  requireProfileOwnership,
   (req, res, next) => {
     videoUpload.single('video')(req, res, (err) => {
       if (err) {

@@ -67,7 +67,6 @@ class ProfileController {
       }
 
       logger.info(`Retrieving profile by ID: ${userId}`);
-      logger.info(`Retrieving token in getProfileById controller: ${token}`);
 
       const profile = await this.profileService.getProfile(userId, token);
 
