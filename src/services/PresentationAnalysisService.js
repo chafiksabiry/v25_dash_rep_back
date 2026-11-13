@@ -140,7 +140,9 @@ const runPresentationAnalysis = async ({
     logger.error(`Failed to persist presentation analysis for profile ${agentId}: ${persistError?.message}`);
   }
 
-  if (reuseWizardVideo && saved && result.videoUrl) {
+  // The analysis copy is referenced only when persisted AND the wizard has no video
+  // of its own; in every other case it is deleted (never left orphaned).
+  if (result.videoUrl && (reuseWizardVideo || !saved)) {
     await videoAnalysisService.deleteUploadedVideo(result.videoUrl);
   }
 

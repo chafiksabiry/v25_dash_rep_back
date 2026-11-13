@@ -124,12 +124,19 @@ describe('runPresentationAnalysis', () => {
       expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
     });
 
-    test('persistence failed → copy not deleted', async () => {
+    test('persistence failed (no wizard video) → analysis copy deleted, not orphaned', async () => {
       const d = deps();
-      d.profileRepository.resolveAgentIdentity.mockResolvedValue({ _id: 'agentA', userId: 'userA', presentationVideoUrl: 'https://cdn.example/w.mp4' });
       d.profileRepository.savePresentationVideoAnalysis.mockRejectedValue(new Error('x'));
       await runPresentationAnalysis(d);
-      expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
+      expect(d.videoAnalysisService.deleteUploadedVideo).toHaveBeenCalledWith('https://cdn.example/p.mp4');
+    });
+
+    test('persistence failed with a wizard video → copy deleted too (never referenced)', async () => {
+      const d = deps();
+      d.profileRepository.resolveAgentIdentity.mockResolvedValue({ _id: 'agentA', userId: 'userA', presentationVideoUrl: 'https://cdn.example/w.mp4' });
+      d.profileRepository.savePresentationVideoAnalysis.mockResolvedValue({ saved: false, insightsApplied: false });
+      await runPresentationAnalysis(d);
+      expect(d.videoAnalysisService.deleteUploadedVideo).toHaveBeenCalledWith('https://cdn.example/p.mp4');
     });
   });
 

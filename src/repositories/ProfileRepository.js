@@ -202,9 +202,6 @@ class ProfileRepository {
       ? { _id: profileId }
       : { userId: profileId };
 
-    const agent = await Agent.findOne(filter, { personalInfo: 1 }).lean();
-    if (!agent) return { saved: false, insightsApplied: false };
-
     const fields = {
       analyzedVideoUrl: payload.videoUrl || null,
       analyzedDuration: payload.duration || null,
@@ -217,29 +214,45 @@ class ProfileRepository {
     };
 
     const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
-    const info = agent.personalInfo;
-    const set = {};
-    if (info === null || info === undefined) {
-      // Nothing to preserve: create the parents in one go.
-      set.personalInfo = { presentationVideo: fields };
-    } else if (!isObj(info)) {
-      return { saved: false, insightsApplied: false };
-    } else {
-      const pv = info.presentationVideo;
-      if (pv === null || pv === undefined) {
-        set['personalInfo.presentationVideo'] = fields;
-      } else if (isObj(pv)) {
-        Object.entries(fields).forEach(([k, v]) => {
-          set[`personalInfo.presentationVideo.${k}`] = v;
-        });
-      } else {
-        // Legacy bare string owned by the wizard: write next to it.
-        set['personalInfo.presentationVideoAnalysis'] = fields;
-      }
-    }
 
-    const res = await Agent.updateOne(filter, { $set: set });
-    if (res.matchedCount === 0) return { saved: false, insightsApplied: false };
+    // The wizard owns personalInfo.presentationVideo and may write it between our
+    // read and our write. The update is therefore CONDITIONAL on the exact state we
+    // read (compare-and-set); on a miss we re-read and retry, never overwrite.
+    const MAX_ATTEMPTS = 3;
+    let matched = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && !matched; attempt += 1) {
+      const agent = await Agent.findOne(filter, { personalInfo: 1 }).lean();
+      if (!agent) return { saved: false, insightsApplied: false };
+
+      const info = agent.personalInfo;
+      const set = {};
+      const guard = {};
+      if (info === null || info === undefined) {
+        guard.personalInfo = null; // null or missing
+        set.personalInfo = { presentationVideo: fields };
+      } else if (!isObj(info)) {
+        return { saved: false, insightsApplied: false };
+      } else {
+        const pv = info.presentationVideo;
+        if (pv === null || pv === undefined) {
+          guard['personalInfo.presentationVideo'] = null;
+          set['personalInfo.presentationVideo'] = fields;
+        } else if (isObj(pv)) {
+          guard['personalInfo.presentationVideo'] = { $type: 'object' };
+          Object.entries(fields).forEach(([k, v]) => {
+            set[`personalInfo.presentationVideo.${k}`] = v;
+          });
+        } else {
+          // Legacy bare string owned by the wizard: write next to it.
+          guard['personalInfo.presentationVideo'] = { $type: typeof pv === 'string' ? 'string' : 'undefined' };
+          set['personalInfo.presentationVideoAnalysis'] = fields;
+        }
+      }
+
+      const res = await Agent.updateOne({ ...filter, ...guard }, { $set: set });
+      matched = res.matchedCount > 0;
+    }
+    if (!matched) return { saved: false, insightsApplied: false };
 
     const insightsApplied = await this.applyVideoInsights(filter);
     return { saved: true, insightsApplied };

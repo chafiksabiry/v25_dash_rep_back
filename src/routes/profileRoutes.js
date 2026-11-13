@@ -71,6 +71,8 @@ router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUploa
 // personalInfo.presentationVideo.* and merges detected skills/sectors/languages.
 router.post(
   '/:id/presentation/analyze-video',
+  // Verified token + ownership BEFORE multer buffers up to 150 MB.
+  requireProfileOwnership,
   (req, res, next) => {
     videoUpload.single('video')(req, res, (err) => {
       if (err) {

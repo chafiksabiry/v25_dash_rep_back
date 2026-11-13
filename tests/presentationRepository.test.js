@@ -20,7 +20,7 @@ const run = async (personalInfo) => {
   Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, personalInfo }) });
   Agent.updateOne.mockResolvedValue({ matchedCount: 1 });
   const out = await repo.savePresentationVideoAnalysis(String(id), payload);
-  return { out, set: Agent.updateOne.mock.calls[0][1].$set };
+  return { out, set: Agent.updateOne.mock.calls[0][1].$set, filter: Agent.updateOne.mock.calls[0][0] };
 };
 
 beforeEach(() => jest.clearAllMocks());
@@ -65,6 +65,49 @@ describe('savePresentationVideoAnalysis', () => {
     Agent.findOne.mockReturnValue({ lean: () => Promise.resolve(null) });
     expect(await repo.savePresentationVideoAnalysis(String(id), payload)).toEqual({ saved: false, insightsApplied: false });
     expect(Agent.updateOne).not.toHaveBeenCalled();
+  });
+});
+
+describe('compare-and-set against concurrent wizard writes', () => {
+  const setup = (personalInfo, matched) => {
+    const repo = new ProfileRepository();
+    repo.applyVideoInsights = jest.fn().mockResolvedValue(true);
+    Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, personalInfo }) });
+    matched.forEach((m) => Agent.updateOne.mockResolvedValueOnce({ matchedCount: m }));
+    return repo;
+  };
+
+  test('presentationVideo null/missing: write only if still null (guard in the filter)', async () => {
+    const { filter } = await run({ presentationVideo: null });
+    expect(filter['personalInfo.presentationVideo']).toBeNull();
+    Agent.updateOne.mockClear();
+    expect((await run(null)).filter.personalInfo).toBeNull();
+  });
+
+  test('object: write only if still an object', async () => {
+    const { filter } = await run({ presentationVideo: { url: 'w' } });
+    expect(filter['personalInfo.presentationVideo']).toEqual({ $type: 'object' });
+  });
+
+  test('string: write only if still a string', async () => {
+    const { filter } = await run({ presentationVideo: 'legacy' });
+    expect(filter['personalInfo.presentationVideo']).toEqual({ $type: 'string' });
+  });
+
+  test('wizard wrote in between (no match) → re-read and retry, then saved', async () => {
+    const repo = setup({ presentationVideo: null }, [0, 1]);
+    const out = await repo.savePresentationVideoAnalysis(String(id), payload);
+    expect(Agent.findOne).toHaveBeenCalledTimes(2);
+    expect(Agent.updateOne).toHaveBeenCalledTimes(2);
+    expect(out.saved).toBe(true);
+  });
+
+  test('conflict persists → saved:false, nothing forced, insights not applied', async () => {
+    const repo = setup({ presentationVideo: null }, [0, 0, 0]);
+    const out = await repo.savePresentationVideoAnalysis(String(id), payload);
+    expect(out).toEqual({ saved: false, insightsApplied: false });
+    expect(Agent.updateOne).toHaveBeenCalledTimes(3);
+    expect(repo.applyVideoInsights).not.toHaveBeenCalled();
   });
 });
 

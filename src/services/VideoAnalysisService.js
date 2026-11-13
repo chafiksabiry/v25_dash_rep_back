@@ -1630,12 +1630,13 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
     let audioTmpPath = null;
+    let upload = null;
 
     try {
       fs.writeFileSync(tmpPath, videoBuffer);
 
       console.log(`Uploading video to Cloudinary (${Math.round(videoBuffer.length / 1024)}KB)...`);
-      const upload = await this.uploadToCloudinary(tmpPath);
+      upload = await this.uploadToCloudinary(tmpPath);
 
       // Garde-fou durée : une présentation crédible doit durer au moins 30s.
       if (typeof upload.duration === 'number' && upload.duration < MIN_DURATION_SECONDS) {
@@ -1825,6 +1826,13 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
         },
         provider: 'openai',
       };
+    } catch (error) {
+      // Presentation analysis that fails after the upload must not leave an orphan
+      // Cloudinary copy (one copy per candidate).
+      if (experienceContext?.mode === 'presentation' && upload?.url) {
+        await this.deleteUploadedVideo(upload.url);
+      }
+      throw error;
     } finally {
       if (fs.existsSync(tmpPath)) {
         fs.unlinkSync(tmpPath);
