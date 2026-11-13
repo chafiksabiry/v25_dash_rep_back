@@ -1,6 +1,6 @@
-const mongoose = require('mongoose');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 
 /**
  * Requires an identity proven by a verified token. The legacy header-only
@@ -24,7 +24,7 @@ const requireProfileOwnership = async (req, res, next) => {
   }
 
   const profileId = req.params.id;
-  if (!mongoose.isValidObjectId(profileId)) {
+  if (!isObjectIdString(profileId)) {
     return res.status(404).json({ code: 'PROFILE_NOT_FOUND', message: 'Profile not found' });
   }
 

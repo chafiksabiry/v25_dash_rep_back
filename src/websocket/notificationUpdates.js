@@ -1,9 +1,9 @@
 const { WebSocketServer } = require('ws');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
 const Agent = require('../models/Agent');
 const { getJwtSecret } = require('../utils/jwtSecret');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 
 /** @type {import('ws').WebSocketServer | null} */
 let wss = null;
@@ -11,8 +11,21 @@ let wss = null;
 const AUTH_TIMEOUT_MS = 5000;
 // Simultaneous sockets that have not authenticated yet, all clients together.
 const MAX_ANONYMOUS_CONNECTIONS = 50;
+// ...and per client address, so a few sockets cannot exhaust the global cap for everyone.
+const MAX_ANONYMOUS_PER_IP = 5;
 // Messages are tiny ({type:'auth',token}); ws would otherwise accept 100 MiB per message.
-const MAX_PAYLOAD_BYTES = 8 * 1024;
+const MAX_PAYLOAD_BYTES = 16 * 1024;
+
+/**
+ * Client address for the per-IP cap. Behind the platform proxy the socket address is the
+ * proxy's, so the LAST X-Forwarded-For entry (appended by that proxy) is used; earlier
+ * entries are client-supplied and ignored. Assumes exactly one trusted proxy hop.
+ */
+const clientIp = (req) => {
+  const xff = String(req?.headers?.['x-forwarded-for'] || '');
+  const last = xff.split(',').map((v) => v.trim()).filter(Boolean).pop();
+  return last || req?.socket?.remoteAddress || 'unknown';
+};
 
 /** Browsers cannot set an Authorization header on a WebSocket, so the token is
  *  sent in a first `{ type: "auth", token }` message (never in the URL, which gets logged).
@@ -39,7 +52,7 @@ async function authenticate(token) {
 
   const repIds = new Set([String(userId)]);
   try {
-    if (mongoose.isValidObjectId(userId)) {
+    if (isObjectIdString(String(userId))) {
       const agents = await Agent.find({ userId }, { _id: 1 }).lean();
       agents.forEach((a) => repIds.add(String(a._id)));
     }
@@ -57,16 +70,17 @@ async function authenticate(token) {
 function setupNotificationWebSocket(server, options = {}) {
   const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const maxAnonymous = options.maxAnonymous ?? MAX_ANONYMOUS_CONNECTIONS;
+  const maxAnonymousPerIp = options.maxAnonymousPerIp ?? MAX_ANONYMOUS_PER_IP;
   wss = new WebSocketServer({
     server,
     path: '/notification-updates',
     maxPayload: MAX_PAYLOAD_BYTES,
   });
 
-  const anonymousCount = () => {
+  const anonymousCount = (ip) => {
     let n = 0;
     wss.clients.forEach((c) => {
-      if (!c.repIds) n += 1;
+      if (!c.repIds && (ip === undefined || c.clientIp === ip)) n += 1;
     });
     return n;
   };
@@ -74,8 +88,10 @@ function setupNotificationWebSocket(server, options = {}) {
   wss.on('connection', (ws, req) => {
     ws.repIds = null; // null = not authenticated: never receives broadcasts
 
-    // Cap on simultaneous unauthenticated sockets (this one is already counted).
-    if (anonymousCount() > maxAnonymous) {
+    ws.clientIp = clientIp(req);
+
+    // Caps on simultaneous unauthenticated sockets (this one is already counted).
+    if (anonymousCount() > maxAnonymous || anonymousCount(ws.clientIp) > maxAnonymousPerIp) {
       ws.close(1013, 'too many unauthenticated connections');
       return;
     }
