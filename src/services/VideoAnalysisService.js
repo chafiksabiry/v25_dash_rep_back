@@ -545,6 +545,23 @@ class VideoAnalysisService {
     return publicId || null;
   }
 
+  /**
+   * Delete a video previously uploaded for analysis (best effort, never throws).
+   * Used so a candidate keeps a single Cloudinary copy of the presentation video.
+   */
+  async deleteUploadedVideo(url) {
+    try {
+      this._ensureInitialized();
+      const publicId = this.cloudinaryVideoPublicId(url);
+      if (!publicId) return false;
+      const res = await cloudinary.uploader.destroy(publicId, { resource_type: 'video', invalidate: true });
+      return res?.result === 'ok';
+    } catch (error) {
+      logger.warn(`Could not delete analysis video copy: ${error?.message}`);
+      return false;
+    }
+  }
+
   /** URL Cloudinary d'une image (frame) extraite de la vidéo à un offset donné. */
   buildFrameUrl(publicId, offsetSeconds) {
     return cloudinary.url(publicId, {

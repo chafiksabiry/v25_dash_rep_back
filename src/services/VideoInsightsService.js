@@ -516,7 +516,8 @@ const presentationAsExperience = (agent) => {
   const pv =
     raw && typeof raw === 'object' ? raw : agent?.personalInfo?.presentationVideoAnalysis;
   if (!pv || typeof pv !== 'object' || !pv.analysis || typeof pv.analysis !== 'object') return null;
-  const videoUrl = pv.analyzedVideoUrl || pv.url;
+  const videoUrl =
+    pv.analyzedVideoUrl || pv.url || (typeof raw === 'string' ? raw : null);
   if (!videoUrl) return null;
   return {
     isPresentation: true,

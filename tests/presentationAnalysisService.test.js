@@ -25,12 +25,18 @@ const pipelineResult = () => ({
 });
 
 const deps = (overrides = {}) => ({
-  videoAnalysisService: { analyzeExperienceVideo: jest.fn().mockResolvedValue(pipelineResult()) },
+  videoAnalysisService: {
+    analyzeExperienceVideo: jest.fn().mockResolvedValue(pipelineResult()),
+    deleteUploadedVideo: jest.fn().mockResolvedValue(true),
+  },
   profileRepository: {
+    resolveAgentIdentity: jest.fn().mockResolvedValue({ _id: 'agentA', userId: 'userA', presentationVideoUrl: null }),
     getReferencePhotoUrl: jest.fn().mockResolvedValue(null),
     savePresentationVideoAnalysis: jest.fn().mockResolvedValue({ saved: true, insightsApplied: true }),
   },
-  profileId: 'p1',
+  profileId: 'agentA',
+  requesterId: 'userA',
+  authVerified: true,
   file,
   logger,
   ...overrides,
@@ -53,6 +59,78 @@ describe('runPresentationAnalysis', () => {
     expect(body.data.detected.industries[0].name).toBe('Telecom');
     expect(body.data.detected.languages.map((l) => l.name)).toEqual(['English', 'Wolof']);
     expect(body.data.detected.isEmpty).toBe(false);
+    // Response limited to what the front consumes: no transcript, no full analysis.
+    expect(Object.keys(body.data).sort()).toEqual(['detected', 'insightsApplied', 'relevance', 'saved', 'summary']);
+    expect(JSON.stringify(body)).not.toContain('SECRET TRANSCRIPT');
+  });
+
+  describe('authorization (before any external call)', () => {
+    const expectNothingCalled = (d) => {
+      expect(d.videoAnalysisService.analyzeExperienceVideo).not.toHaveBeenCalled();
+      expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
+      expect(d.profileRepository.savePresentationVideoAnalysis).not.toHaveBeenCalled();
+      expect(d.profileRepository.getReferencePhotoUrl).not.toHaveBeenCalled();
+    };
+
+    test("token of profile A on profile B → 403, nothing written, no OpenAI/Cloudinary call", async () => {
+      const d = deps({ requesterId: 'userA' });
+      d.profileRepository.resolveAgentIdentity.mockResolvedValue({ _id: 'agentB', userId: 'userB' });
+      const { status, body } = await runPresentationAnalysis(d);
+      expect(status).toBe(403);
+      expect(body.code).toBe('FORBIDDEN');
+      expectNothingCalled(d);
+    });
+
+    test('identity not proven by a verified token (header fallback) → 401', async () => {
+      const d = deps({ authVerified: false });
+      const { status } = await runPresentationAnalysis(d);
+      expect(status).toBe(401);
+      expect(d.profileRepository.resolveAgentIdentity).not.toHaveBeenCalled();
+      expectNothingCalled(d);
+    });
+
+    test('unknown profile → 404, nothing called', async () => {
+      const d = deps();
+      d.profileRepository.resolveAgentIdentity.mockResolvedValue(null);
+      const { status } = await runPresentationAnalysis(d);
+      expect(status).toBe(404);
+      expectNothingCalled(d);
+    });
+
+    test('owner is matched on userId whether :id was the agent _id or the userId', async () => {
+      const d = deps({ profileId: 'userA' });
+      const { status } = await runPresentationAnalysis(d);
+      expect(status).toBe(200);
+      // always persisted by the resolved agent _id
+      expect(d.profileRepository.savePresentationVideoAnalysis.mock.calls[0][0]).toBe('agentA');
+    });
+  });
+
+  describe('single Cloudinary copy', () => {
+    test('wizard already has the video → analysis copy not referenced and deleted', async () => {
+      const d = deps();
+      d.profileRepository.resolveAgentIdentity.mockResolvedValue({
+        _id: 'agentA', userId: 'userA', presentationVideoUrl: 'https://cdn.example/wizard.mp4',
+      });
+      await runPresentationAnalysis(d);
+      expect(d.profileRepository.savePresentationVideoAnalysis.mock.calls[0][1].videoUrl).toBeNull();
+      expect(d.videoAnalysisService.deleteUploadedVideo).toHaveBeenCalledWith('https://cdn.example/p.mp4');
+    });
+
+    test('no wizard video → analysis copy is kept and referenced', async () => {
+      const d = deps();
+      await runPresentationAnalysis(d);
+      expect(d.profileRepository.savePresentationVideoAnalysis.mock.calls[0][1].videoUrl).toBe('https://cdn.example/p.mp4');
+      expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
+    });
+
+    test('persistence failed → copy not deleted', async () => {
+      const d = deps();
+      d.profileRepository.resolveAgentIdentity.mockResolvedValue({ _id: 'agentA', userId: 'userA', presentationVideoUrl: 'https://cdn.example/w.mp4' });
+      d.profileRepository.savePresentationVideoAnalysis.mockRejectedValue(new Error('x'));
+      await runPresentationAnalysis(d);
+      expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
+    });
   });
 
   test('VIDEO_TOO_SHORT → 400 with code, nothing persisted', async () => {

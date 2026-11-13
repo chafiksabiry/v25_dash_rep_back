@@ -173,9 +173,28 @@ class ProfileRepository {
   }
 
   /**
+   * Resolve an agent from `:id`, which may be the agent _id OR the userId.
+   * Returns { _id, userId, presentationVideoUrl } or null.
+   */
+  async resolveAgentIdentity(profileId) {
+    if (!mongoose.isValidObjectId(profileId)) return null;
+    const agent = await Agent.findOne(
+      { $or: [{ _id: profileId }, { userId: profileId }] },
+      { userId: 1, 'personalInfo.presentationVideo': 1 }
+    ).lean();
+    if (!agent) return null;
+    const pv = agent.personalInfo?.presentationVideo;
+    const presentationVideoUrl =
+      typeof pv === 'string' ? pv : pv && typeof pv === 'object' ? pv.url || null : null;
+    return { _id: agent._id, userId: agent.userId, presentationVideoUrl };
+  }
+
+  /**
    * Persist the presentation-video analysis under personalInfo.presentationVideo.*
-   * (dot paths only: fields owned by the wizard, e.g. `url`, are never touched),
-   * then merge the detected skills/sectors/activities/languages into the agent.
+   * without ever touching wizard-owned fields (`url`, `publicId`, `duration`...):
+   * analysis fields are namespaced (analyzedVideoUrl, analyzedDuration, ...).
+   * Handles null/missing personalInfo or presentationVideo. Then merges the
+   * detected skills/sectors/activities/languages via applyVideoInsights.
    * Returns { saved, insightsApplied }.
    */
   async savePresentationVideoAnalysis(profileId, payload) {
@@ -183,28 +202,41 @@ class ProfileRepository {
       ? { _id: profileId }
       : { userId: profileId };
 
-    const agent = await Agent.findOne(filter).lean();
+    const agent = await Agent.findOne(filter, { personalInfo: 1 }).lean();
     if (!agent) return { saved: false, insightsApplied: false };
 
-    // presentationVideo is wizard-owned; if it is a bare string, don't turn it into
-    // an object — write next to it instead.
-    const current = agent.personalInfo?.presentationVideo;
-    const base =
-      current && typeof current !== 'object'
-        ? 'personalInfo.presentationVideoAnalysis'
-        : 'personalInfo.presentationVideo';
-
-    const set = {
-      [`${base}.analyzedVideoUrl`]: payload.videoUrl || null,
-      [`${base}.duration`]: payload.duration || null,
-      [`${base}.transcription`]: payload.transcription || '',
-      [`${base}.analysis`]: this.sanitizeAnalysisForStorage(payload.analysis) || {},
-      [`${base}.languageAssessment`]:
-        this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
-      [`${base}.fraudCheck`]: payload.fraudCheck || {},
-      [`${base}.relevance`]: payload.relevance || {},
-      [`${base}.analyzedAt`]: new Date(),
+    const fields = {
+      analyzedVideoUrl: payload.videoUrl || null,
+      analyzedDuration: payload.duration || null,
+      transcription: payload.transcription || '',
+      analysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
+      languageAssessment: this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
+      fraudCheck: payload.fraudCheck || {},
+      relevance: payload.relevance || {},
+      analyzedAt: new Date(),
     };
+
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+    const info = agent.personalInfo;
+    const set = {};
+    if (info === null || info === undefined) {
+      // Nothing to preserve: create the parents in one go.
+      set.personalInfo = { presentationVideo: fields };
+    } else if (!isObj(info)) {
+      return { saved: false, insightsApplied: false };
+    } else {
+      const pv = info.presentationVideo;
+      if (pv === null || pv === undefined) {
+        set['personalInfo.presentationVideo'] = fields;
+      } else if (isObj(pv)) {
+        Object.entries(fields).forEach(([k, v]) => {
+          set[`personalInfo.presentationVideo.${k}`] = v;
+        });
+      } else {
+        // Legacy bare string owned by the wizard: write next to it.
+        set['personalInfo.presentationVideoAnalysis'] = fields;
+      }
+    }
 
     const res = await Agent.updateOne(filter, { $set: set });
     if (res.matchedCount === 0) return { saved: false, insightsApplied: false };

@@ -13,6 +13,8 @@ const authenticateToken = (req, res, next) => {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
       req.user = decoded;
+      // Identity proven by a verified JWT (as opposed to the x-user-id fallback below).
+      req.authVerified = true;
       return next();
     } catch (error) {
       // If token is invalid but we have a userId from header, proceed anyway

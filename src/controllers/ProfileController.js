@@ -710,6 +710,8 @@ class ProfileController {
         videoAnalysisService: this.videoAnalysisService,
         profileRepository: this.profileRepository,
         profileId: req.params.id,
+        requesterId: req.user?.userId || req.user?.id,
+        authVerified: req.authVerified === true,
         file: req.file,
       });
       res.status(status).json(body);
