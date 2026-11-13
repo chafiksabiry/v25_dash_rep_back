@@ -165,6 +165,11 @@ describe('resolveAgentIdentity', () => {
     expect(Agent.findOne.mock.calls[0][0].$or).toHaveLength(2);
     expect(out.presentationVideoUrl).toBe('w');
   });
+  test('12-character id → null without querying', async () => {
+    const repo = new ProfileRepository();
+    expect(await repo.resolveAgentIdentity('abcdefghijkl')).toBeNull();
+    expect(Agent.findOne).not.toHaveBeenCalled();
+  });
   test('invalid id → null without querying', async () => {
     const repo = new ProfileRepository();
     expect(await repo.resolveAgentIdentity('not-an-id')).toBeNull();

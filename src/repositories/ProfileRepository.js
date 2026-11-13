@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Profile = require('../models/Profile');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 const {
   buildVideoAssessmentResults,
   rebuildProfileVideoInsights,
@@ -177,7 +178,7 @@ class ProfileRepository {
    * Returns { _id, userId, presentationVideoUrl } or null.
    */
   async resolveAgentIdentity(profileId) {
-    if (!mongoose.isValidObjectId(profileId)) return null;
+    if (!isObjectIdString(String(profileId))) return null;
     const agent = await Agent.findOne(
       { $or: [{ _id: profileId }, { userId: profileId }] },
       { userId: 1, 'personalInfo.presentationVideo': 1 }
