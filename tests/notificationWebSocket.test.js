@@ -261,6 +261,40 @@ describe('unauthenticated socket limits', () => {
     await new Promise((r) => srv.close(r));
   });
 
+  test('0 trusted hops (direct connection): X-Forwarded-For is ignored, forging it evades nothing', async () => {
+    const srv = await startServer({ maxAnonymousPerIp: 2, trustedProxyHops: 0, authTimeoutMs: 5000 });
+    const sockets4 = [];
+    for (let i = 0; i < 4; i += 1) sockets4.push(await openTo(srv, { 'X-Forwarded-For': `10.0.0.${i}` }));
+    await wait(200);
+    expect(sockets4.filter((w) => w.closeCode === 1013)).toHaveLength(2);
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('2 trusted hops: the 2nd entry from the right is the client', async () => {
+    const srv = await startServer({ maxAnonymousPerIp: 1, trustedProxyHops: 2, authTimeoutMs: 5000 });
+    const a = await openTo(srv, { 'X-Forwarded-For': 'forged, 203.0.113.9, 10.1.1.1' });
+    const sameClient = await openTo(srv, { 'X-Forwarded-For': 'other-forged, 203.0.113.9, 10.1.1.2' });
+    const otherClient = await openTo(srv, { 'X-Forwarded-For': 'x, 198.51.100.7, 10.1.1.1' });
+    await wait(200);
+    expect(a.closeCode).toBeNull();
+    expect(sameClient.closeCode).toBe(1013);
+    expect(otherClient.closeCode).toBeNull();
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('header with fewer entries than trusted hops falls back to the socket address', async () => {
+    const srv = await startServer({ maxAnonymousPerIp: 1, trustedProxyHops: 3, authTimeoutMs: 5000 });
+    const a = await openTo(srv, { 'X-Forwarded-For': '203.0.113.9' });
+    const b = await openTo(srv, { 'X-Forwarded-For': '198.51.100.7' });
+    await wait(150);
+    expect(a.closeCode).toBeNull();
+    expect(b.closeCode).toBe(1013); // same socket address fallback
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
   test('a token of ~10 KiB is accepted (maxPayload 16 KiB)', async () => {
     const srv = await startServer({ authTimeoutMs: 5000 });
     const big = jwt.sign({ userId: A, pad: 'x'.repeat(10 * 1024) }, SECRET);
