@@ -161,6 +161,11 @@ describe('stale presentation analysis (wizard re-recorded another video)', () =>
     expect(isPresentationAnalysisStale(agent)).toBe(true);
   });
 
+  test("'' (wizard) vs null/absent (analysis) → fresh", () => {
+    expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: pvWith({ publicId: '', analyzedForPublicId: null }) } })).toBe(false);
+    expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: pvWith({ publicId: '', analyzedForPublicId: '' }) } })).toBe(false);
+  });
+
   test('same publicId → fresh; both absent → fresh', () => {
     expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: pvWith({ analyzedForPublicId: 'wizard-new' }) } })).toBe(false);
     expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: presentation(fullAnalysis()) } })).toBe(false);

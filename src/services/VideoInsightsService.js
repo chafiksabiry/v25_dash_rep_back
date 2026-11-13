@@ -513,7 +513,8 @@ const stripExperienceLanguageAssessments = (languages = []) =>
 const isPresentationAnalysisStale = (agent) => {
   const pv = agent?.personalInfo?.presentationVideo;
   if (!pv || typeof pv !== 'object' || !pv.analysis) return false;
-  return (pv.analyzedForPublicId ?? null) !== (pv.publicId ?? null);
+  // '' and absent both mean "no publicId" (the wizard may store an empty string).
+  return (pv.analyzedForPublicId || null) !== (pv.publicId || null);
 };
 
 /**

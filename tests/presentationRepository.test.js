@@ -152,6 +152,29 @@ describe('stale detection at write time', () => {
   test('wizard publicId changed since the request → stale', async () => {
     expect((await doSave({ url: 'w', publicId: 'p2' }, 'p1')).stale).toBe(true);
   });
+  test("'' (wizard) and null (analysis) both mean no publicId → not stale", async () => {
+    expect((await doSave({ url: 'w', publicId: '' }, null)).stale).toBe(false);
+    expect((await doSave({ url: 'w', publicId: '' }, '')).stale).toBe(false);
+  });
+  test('a stale analysis is written WITHOUT analyzedVideoUrl (no dangling reference)', async () => {
+    await doSave({ url: 'w', publicId: 'p2' }, 'p1');
+    const set = Agent.updateOne.mock.calls[0][1].$set;
+    expect(set['personalInfo.presentationVideo.analyzedVideoUrl']).toBeNull();
+  });
+  test('stale analysis, whole-object write (presentationVideo absent): analyzedVideoUrl null too', async () => {
+    const repo = new ProfileRepository();
+    repo.applyVideoInsights = jest.fn().mockResolvedValue(true);
+    Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, personalInfo: { presentationVideo: null } }) });
+    Agent.updateOne.mockResolvedValue({ matchedCount: 1 });
+    const out = await repo.savePresentationVideoAnalysis(String(id), { ...payload, analyzedForPublicId: 'p1' });
+    expect(out.stale).toBe(true);
+    expect(Agent.updateOne.mock.calls[0][1].$set['personalInfo.presentationVideo'].analyzedVideoUrl).toBeNull();
+  });
+  test('fresh analysis keeps analyzedVideoUrl', async () => {
+    await doSave({ url: 'w', publicId: 'p1' }, 'p1');
+    const set = Agent.updateOne.mock.calls[0][1].$set;
+    expect(set['personalInfo.presentationVideo.analyzedVideoUrl']).toBe('https://cdn.example/analysis.mp4');
+  });
   test('no publicId on either side → not stale', async () => {
     expect((await doSave({ url: 'w' }, null)).stale).toBe(false);
   });

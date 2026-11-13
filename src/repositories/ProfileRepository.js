@@ -205,7 +205,7 @@ class ProfileRepository {
       ? { _id: profileId }
       : { userId: profileId };
 
-    const fields = {
+    const baseFields = {
       analyzedVideoUrl: payload.videoUrl || null,
       analyzedDuration: payload.duration || null,
       // Wizard publicId when the analysis was requested: the analysis is stale once it changes.
@@ -235,6 +235,7 @@ class ProfileRepository {
       const set = {};
       const guard = {};
       let currentPublicId = null;
+      const fields = { ...baseFields };
       if (info === null || info === undefined) {
         guard.personalInfo = null; // null or missing
         set.personalInfo = { presentationVideo: fields };
@@ -248,8 +249,8 @@ class ProfileRepository {
         } else if (isObj(pv)) {
           guard['personalInfo.presentationVideo'] = { $type: 'object' };
           // Also pin the wizard publicId we judged staleness against (null matches absent).
-          guard['personalInfo.presentationVideo.publicId'] = pv.publicId ?? null;
-          currentPublicId = pv.publicId ?? null;
+          guard['personalInfo.presentationVideo.publicId'] = pv.publicId ?? null; // raw value, as stored
+          currentPublicId = pv.publicId || null; // '' and absent both mean "no publicId"
           Object.entries(fields).forEach(([k, v]) => {
             set[`personalInfo.presentationVideo.${k}`] = v;
           });
@@ -260,9 +261,19 @@ class ProfileRepository {
         }
       }
 
+      // Judged against the exact state the guard pins. A stale analysis must not keep a
+      // reference to a video copy that the caller is about to delete.
+      const attemptStale = (payload.analyzedForPublicId || null) !== currentPublicId;
+      if (attemptStale) {
+        fields.analyzedVideoUrl = null; // whole-object writes share this object
+        if ('personalInfo.presentationVideo.analyzedVideoUrl' in set) {
+          set['personalInfo.presentationVideo.analyzedVideoUrl'] = null;
+        }
+      }
+
       const res = await Agent.updateOne({ ...filter, ...guard }, { $set: set });
       matched = res.matchedCount > 0;
-      if (matched) stale = (payload.analyzedForPublicId || null) !== currentPublicId;
+      if (matched) stale = attemptStale;
     }
     if (!matched) return { saved: false, insightsApplied: false, stale: false };
 
