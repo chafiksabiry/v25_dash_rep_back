@@ -33,13 +33,13 @@
 | `PUT /api/profiles/` | sans `:id` → refusée 400 (`updateProfile` exige `req.params.id`) |
 | `GET /api/profiles/reps-score`, `GET /api/profiles/completion-status` | utilisent `req.user.id` |
 | `/api/notifications/*` | identité dérivée du jeton vérifié (PR #5) |
-| `POST /:id/identity/recheck`, `/:id/language/accent/recheck`, `/:id/experience/analyze-video`, `/:id/language/analyze-video`, `/:id/presentation/analyze-video` | `requireProfileOwnership` (PR #5 / #6 / #3) |
+| `GET /:id/language/analyze-video/jobs/:jobId` (ligne 10 ci-dessus, alignée sur décision CTO), `POST /:id/identity/recheck`, `/:id/language/accent/recheck`, `/:id/experience/analyze-video`, `/:id/language/analyze-video`, `/:id/presentation/analyze-video` | `requireProfileOwnership` (PR #5 / #6 / #3) |
 
 ## Points à trancher
 
 1. **Le service externe `REP_PROFILE_API` applique-t-il lui-même la propriété** sur `GET/PUT /profiles/:id` ? Si oui, les routes 1-9 sont déjà protégées en pratique ; sinon, c'est ce dépôt qui expose l'IDOR.
 2. Routes **légitimement multi-identités** à identifier (CTO : entreprise qui consulte un REP) : probablement la route 1 (`/user/:id`) et peut-être 8-9 ; les routes **d'écriture 2-7** semblent propriétaire seul, à confirmer.
-3. La route 10 peut être alignée sur `requireProfileOwnership` sans impact attendu : le polling suit un `POST` déjà réservé au propriétaire.
+3. ~~Route 10~~ : **alignée sur `requireProfileOwnership`** dans cette PR (décision CTO).
 4. Mode `ALLOW_HEADER_AUTH=true` : décider si ces routes doivent refuser l'identité non vérifiée.
 
 ## Limites de cet inventaire

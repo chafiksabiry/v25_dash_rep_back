@@ -70,6 +70,7 @@ router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUploa
 // Poll async language video analysis job (must be registered before POST analyze-video)
 router.get(
   '/:id/language/analyze-video/jobs/:jobId',
+  requireProfileOwnership,
   profileController.getLanguageVideoJobStatus.bind(profileController)
 );
 
