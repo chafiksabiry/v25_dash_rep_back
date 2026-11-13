@@ -17,14 +17,27 @@ const MAX_ANONYMOUS_PER_IP = 5;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
 
 /**
- * Client address for the per-IP cap. Behind the platform proxy the socket address is the
- * proxy's, so the LAST X-Forwarded-For entry (appended by that proxy) is used; earlier
- * entries are client-supplied and ignored. Assumes exactly one trusted proxy hop.
+ * Client address for the per-IP cap, given the number of TRUSTED proxy hops in front of
+ * the server (env WS_TRUSTED_PROXY_HOPS, default 1):
+ *  - 0 hops: direct connection, X-Forwarded-For is client-controlled and ignored; the
+ *    socket address is used.
+ *  - N hops: the Nth entry from the right of X-Forwarded-For (each trusted proxy appends
+ *    the address it saw); entries further left are client-supplied and ignored.
+ * Falls back to the socket address when the header has fewer entries than hops.
  */
-const clientIp = (req) => {
-  const xff = String(req?.headers?.['x-forwarded-for'] || '');
-  const last = xff.split(',').map((v) => v.trim()).filter(Boolean).pop();
-  return last || req?.socket?.remoteAddress || 'unknown';
+const clientIp = (req, trustedHops) => {
+  const socketAddress = req?.socket?.remoteAddress || 'unknown';
+  if (!trustedHops || trustedHops < 1) return socketAddress;
+  const entries = String(req?.headers?.['x-forwarded-for'] || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return entries.length >= trustedHops ? entries[entries.length - trustedHops] : socketAddress;
+};
+
+const parseHops = (value) => {
+  const n = Number.parseInt(value, 10);
+  return Number.isInteger(n) && n >= 0 ? n : 1;
 };
 
 /** Browsers cannot set an Authorization header on a WebSocket, so the token is
@@ -71,6 +84,7 @@ function setupNotificationWebSocket(server, options = {}) {
   const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
   const maxAnonymous = options.maxAnonymous ?? MAX_ANONYMOUS_CONNECTIONS;
   const maxAnonymousPerIp = options.maxAnonymousPerIp ?? MAX_ANONYMOUS_PER_IP;
+  const trustedHops = options.trustedProxyHops ?? parseHops(process.env.WS_TRUSTED_PROXY_HOPS ?? '1');
   wss = new WebSocketServer({
     server,
     path: '/notification-updates',
@@ -88,7 +102,7 @@ function setupNotificationWebSocket(server, options = {}) {
   wss.on('connection', (ws, req) => {
     ws.repIds = null; // null = not authenticated: never receives broadcasts
 
-    ws.clientIp = clientIp(req);
+    ws.clientIp = clientIp(req, trustedHops);
 
     // Caps on simultaneous unauthenticated sockets (this one is already counted).
     if (anonymousCount() > maxAnonymous || anonymousCount(ws.clientIp) > maxAnonymousPerIp) {
