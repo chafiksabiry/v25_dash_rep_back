@@ -133,20 +133,30 @@ const runPresentationAnalysis = async ({
     analyzedForPublicId: owner.presentationVideoPublicId || null,
   };
 
-  let saved = false;
+  let persisted = false;
   let insightsApplied = false;
+  let stale = false;
   try {
     const outcome = await profileRepository.savePresentationVideoAnalysis(agentId, toPersist);
-    saved = !!outcome?.saved;
+    persisted = !!outcome?.saved;
     insightsApplied = !!outcome?.insightsApplied;
-    if (!saved) logger.warn(`Profile ${agentId} not updated: presentation analysis not persisted`);
+    stale = !!outcome?.stale;
+    if (!persisted) logger.warn(`Profile ${agentId} not updated: presentation analysis not persisted`);
+    if (stale) logger.warn(`Presentation analysis for profile ${agentId} is stale: the video changed during analysis`);
   } catch (persistError) {
     logger.error(`Failed to persist presentation analysis for profile ${agentId}: ${persistError?.message}`);
   }
 
-  // The analysis copy is referenced only when persisted AND the wizard has no video
-  // of its own; in every other case it is deleted (never left orphaned).
-  if (result.videoUrl && (reuseWizardVideo || !saved)) {
+  // `saved` is true only when the analysis is persisted AND still valid. A stale analysis
+  // (wizard re-recorded meanwhile) is written but ignored by the merge: nothing was merged.
+  const saved = persisted && !stale;
+  if (stale) insightsApplied = false;
+
+  // The analysis copy is referenced only when the analysis is saved and the wizard has no
+  // video of its own; in every other case it is deleted (never left orphaned). Defensive
+  // guard: never delete the wizard's own video, even if the URLs were ever equal.
+  const copyReferenced = saved && !reuseWizardVideo;
+  if (result.videoUrl && !copyReferenced && result.videoUrl !== owner.presentationVideoUrl) {
     await videoAnalysisService.deleteUploadedVideo(result.videoUrl);
   }
 
@@ -155,6 +165,7 @@ const runPresentationAnalysis = async ({
     body: {
       data: {
         saved,
+        stale,
         insightsApplied,
         detected,
         summary: result.analysis?.summary || { en: '', fr: '' },

@@ -28,7 +28,7 @@ beforeEach(() => jest.clearAllMocks());
 describe('savePresentationVideoAnalysis', () => {
   test('never writes wizard-owned fields (url, publicId, duration); uses analyzedDuration', async () => {
     const { out, set } = await run({ presentationVideo: { url: 'w', publicId: 'p', duration: 99 } });
-    expect(out).toEqual({ saved: true, insightsApplied: true });
+    expect(out).toMatchObject({ saved: true, insightsApplied: true });
     const keys = Object.keys(set);
     expect(keys.every((k) => k.startsWith('personalInfo.presentationVideo.'))).toBe(true);
     ['url', 'publicId', 'duration'].forEach((f) =>
@@ -87,6 +87,13 @@ describe('compare-and-set against concurrent wizard writes', () => {
   test('object: write only if still an object', async () => {
     const { filter } = await run({ presentationVideo: { url: 'w' } });
     expect(filter['personalInfo.presentationVideo']).toEqual({ $type: 'object' });
+    // staleness is judged against the wizard publicId we read: pinned (null matches absent)
+    expect(filter['personalInfo.presentationVideo.publicId']).toBeNull();
+  });
+
+  test('object with a publicId: that publicId is pinned in the filter', async () => {
+    const { filter } = await run({ presentationVideo: { url: 'w', publicId: 'pid-9' } });
+    expect(filter['personalInfo.presentationVideo.publicId']).toBe('pid-9');
   });
 
   test('string: write only if still a string', async () => {
@@ -105,7 +112,7 @@ describe('compare-and-set against concurrent wizard writes', () => {
   test('conflict persists → saved:false, nothing forced, insights not applied', async () => {
     const repo = setup({ presentationVideo: null }, [0, 0, 0]);
     const out = await repo.savePresentationVideoAnalysis(String(id), payload);
-    expect(out).toEqual({ saved: false, insightsApplied: false });
+    expect(out).toEqual({ saved: false, insightsApplied: false, stale: false });
     expect(Agent.updateOne).toHaveBeenCalledTimes(3);
     expect(repo.applyVideoInsights).not.toHaveBeenCalled();
   });
@@ -127,6 +134,26 @@ describe('staleness marker', () => {
     const repo = new ProfileRepository();
     Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, userId: 'u', personalInfo: { presentationVideo: { url: 'w', publicId: 'pid-1' } } }) });
     expect((await repo.resolveAgentIdentity(String(id))).presentationVideoPublicId).toBe('pid-1');
+  });
+});
+
+describe('stale detection at write time', () => {
+  const doSave = async (pv, analyzedForPublicId) => {
+    const repo = new ProfileRepository();
+    repo.applyVideoInsights = jest.fn().mockResolvedValue(true);
+    Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, personalInfo: { presentationVideo: pv } }) });
+    Agent.updateOne.mockResolvedValue({ matchedCount: 1 });
+    return repo.savePresentationVideoAnalysis(String(id), { ...payload, analyzedForPublicId });
+  };
+
+  test('same publicId as at request time → not stale', async () => {
+    expect((await doSave({ url: 'w', publicId: 'p1' }, 'p1')).stale).toBe(false);
+  });
+  test('wizard publicId changed since the request → stale', async () => {
+    expect((await doSave({ url: 'w', publicId: 'p2' }, 'p1')).stale).toBe(true);
+  });
+  test('no publicId on either side → not stale', async () => {
+    expect((await doSave({ url: 'w' }, null)).stale).toBe(false);
   });
 });
 

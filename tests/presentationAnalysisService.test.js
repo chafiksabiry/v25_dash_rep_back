@@ -60,7 +60,7 @@ describe('runPresentationAnalysis', () => {
     expect(body.data.detected.languages.map((l) => l.name)).toEqual(['English', 'Wolof']);
     expect(body.data.detected.isEmpty).toBe(false);
     // Response limited to what the front consumes: no transcript, no full analysis.
-    expect(Object.keys(body.data).sort()).toEqual(['detected', 'insightsApplied', 'relevance', 'saved', 'summary']);
+    expect(Object.keys(body.data).sort()).toEqual(['detected', 'insightsApplied', 'relevance', 'saved', 'stale', 'summary']);
     expect(JSON.stringify(body)).not.toContain('SECRET TRANSCRIPT');
   });
 
@@ -113,6 +113,45 @@ describe('runPresentationAnalysis', () => {
     });
     await runPresentationAnalysis(d);
     expect(d.profileRepository.savePresentationVideoAnalysis.mock.calls[0][1].analyzedForPublicId).toBe('pid-1');
+  });
+
+  describe('stale analysis (wizard re-recorded while analyzing)', () => {
+    const staleDeps = () => {
+      const d = deps();
+      d.profileRepository.savePresentationVideoAnalysis.mockResolvedValue({ saved: true, insightsApplied: true, stale: true });
+      return d;
+    };
+
+    test('saved is false, stale is true, insightsApplied false: nothing was merged', async () => {
+      const { status, body } = await runPresentationAnalysis(staleDeps());
+      expect(status).toBe(200);
+      expect(body.data.saved).toBe(false);
+      expect(body.data.stale).toBe(true);
+      expect(body.data.insightsApplied).toBe(false);
+      expect(body.data.detected.technicalSkills).toHaveLength(1); // still returned for display
+    });
+
+    test('stale analysis copy is deleted, not referenced', async () => {
+      const d = staleDeps();
+      await runPresentationAnalysis(d);
+      expect(d.videoAnalysisService.deleteUploadedVideo).toHaveBeenCalledWith('https://cdn.example/p.mp4');
+    });
+
+    test('fresh analysis: stale=false, saved=true', async () => {
+      const { body } = await runPresentationAnalysis(deps());
+      expect(body.data.stale).toBe(false);
+      expect(body.data.saved).toBe(true);
+    });
+  });
+
+  test('defensive guard: the wizard video is never deleted, even if URLs coincide', async () => {
+    const d = deps();
+    d.profileRepository.resolveAgentIdentity.mockResolvedValue({
+      _id: 'agentA', userId: 'userA', presentationVideoUrl: 'https://cdn.example/p.mp4',
+    });
+    d.profileRepository.savePresentationVideoAnalysis.mockRejectedValue(new Error('x'));
+    await runPresentationAnalysis(d);
+    expect(d.videoAnalysisService.deleteUploadedVideo).not.toHaveBeenCalled();
   });
 
   describe('single Cloudinary copy', () => {

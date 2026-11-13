@@ -224,6 +224,8 @@ class ProfileRepository {
     // read (compare-and-set); on a miss we re-read and retry, never overwrite.
     const MAX_ATTEMPTS = 3;
     let matched = false;
+    // The wizard re-recorded while we were analyzing: written, but ignored by the merge.
+    let stale = false;
     for (let attempt = 0; attempt < MAX_ATTEMPTS && !matched; attempt += 1) {
       const agent = await Agent.findOne(filter, { personalInfo: 1 }).lean();
       if (!agent) return { saved: false, insightsApplied: false };
@@ -231,6 +233,7 @@ class ProfileRepository {
       const info = agent.personalInfo;
       const set = {};
       const guard = {};
+      let currentPublicId = null;
       if (info === null || info === undefined) {
         guard.personalInfo = null; // null or missing
         set.personalInfo = { presentationVideo: fields };
@@ -243,6 +246,9 @@ class ProfileRepository {
           set['personalInfo.presentationVideo'] = fields;
         } else if (isObj(pv)) {
           guard['personalInfo.presentationVideo'] = { $type: 'object' };
+          // Also pin the wizard publicId we judged staleness against (null matches absent).
+          guard['personalInfo.presentationVideo.publicId'] = pv.publicId ?? null;
+          currentPublicId = pv.publicId ?? null;
           Object.entries(fields).forEach(([k, v]) => {
             set[`personalInfo.presentationVideo.${k}`] = v;
           });
@@ -255,11 +261,12 @@ class ProfileRepository {
 
       const res = await Agent.updateOne({ ...filter, ...guard }, { $set: set });
       matched = res.matchedCount > 0;
+      if (matched) stale = (payload.analyzedForPublicId || null) !== currentPublicId;
     }
-    if (!matched) return { saved: false, insightsApplied: false };
+    if (!matched) return { saved: false, insightsApplied: false, stale: false };
 
     const insightsApplied = await this.applyVideoInsights(filter);
-    return { saved: true, insightsApplied };
+    return { saved: true, insightsApplied, stale };
   }
 
   /**
