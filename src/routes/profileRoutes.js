@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const ProfileController = require('../controllers/ProfileController');
 const { authenticateToken } = require('../middleware/auth');
+const { requireProfileOwnership } = require('../middleware/ownership');
 
 const videoUpload = multer({
   storage: multer.memoryStorage(),
@@ -58,7 +59,7 @@ router.get('/completion-status', profileController.getCompletionStatus.bind(prof
 router.get('/:id/plan', profileController.getPlan.bind(profileController));
 
 // Analyze experience video with AI (Whisper + GPT-4)
-router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
+router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
 // Poll async language video analysis job (must be registered before POST analyze-video)
 router.get(
@@ -69,6 +70,7 @@ router.get(
 // Analyze dedicated language verification video (Languages tab — not experience onboarding)
 router.post(
   '/:id/language/analyze-video',
+  requireProfileOwnership,
   (req, res, next) => {
     videoUpload.single('video')(req, res, (err) => {
       if (err) {
