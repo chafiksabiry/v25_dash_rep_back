@@ -129,6 +129,22 @@ describe('error handler logging', () => {
     ['SECRET-TOKEN', 'SECRET-BODY', 'SECRET-QUERY'].forEach((s) => expect(logged).not.toContain(s));
     expect(res.status).toHaveBeenCalledWith(500);
   });
+
+  test('stack is returned only with the explicit EXPOSE_ERROR_STACK=true switch (NODE_ENV irrelevant)', () => {
+    const errorHandler = require('../src/middleware/errorHandler');
+    const run = () => {
+      const res = mkRes();
+      errorHandler(new Error('boom'), { method: 'GET', baseUrl: '', path: '/x' }, res, jest.fn());
+      return res.json.mock.calls[0][0];
+    };
+    delete process.env.NODE_ENV;
+    delete process.env.EXPOSE_ERROR_STACK;
+    expect(run().stack).toBeUndefined();
+    process.env.NODE_ENV = 'development';
+    expect(run().stack).toBeUndefined();
+    process.env.EXPOSE_ERROR_STACK = 'true';
+    expect(run().stack).toBeDefined();
+  });
 });
 
 describe('controller logs', () => {
