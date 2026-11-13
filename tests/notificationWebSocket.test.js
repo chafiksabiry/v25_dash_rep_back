@@ -172,3 +172,68 @@ describe('notification WebSocket', () => {
     expect(ws.received.filter((m) => m.type === 'notification')).toHaveLength(0);
   });
 });
+
+describe('unauthenticated socket limits', () => {
+  const startServer = async (options) => {
+    closeNotificationWebSocket();
+    const srv = http.createServer();
+    setupNotificationWebSocket(srv, options);
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    return srv;
+  };
+  const openTo = (srv) =>
+    new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${srv.address().port}/notification-updates`);
+      ws.closeCode = null;
+      ws.on('close', (code) => { ws.closeCode = code; });
+      ws.on('error', reject);
+      ws.on('open', () => { sockets.push(ws); resolve(ws); });
+    });
+
+  test('a socket that does not authenticate is closed after the timeout (4401)', async () => {
+    const srv = await startServer({ authTimeoutMs: 100 });
+    const ws = await openTo(srv);
+    await wait(60);
+    expect(ws.closeCode).toBeNull();
+    await wait(200);
+    expect(ws.closeCode).toBe(4401);
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('an authenticated socket is NOT closed by the timeout', async () => {
+    const srv = await startServer({ authTimeoutMs: 100 });
+    const ws = await openTo(srv);
+    ws.send(JSON.stringify({ type: 'auth', token: tokenFor(A) }));
+    await wait(300);
+    expect(ws.closeCode).toBeNull();
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('beyond the anonymous cap, new unauthenticated sockets are refused (1013)', async () => {
+    const srv = await startServer({ maxAnonymous: 2, authTimeoutMs: 5000 });
+    const first = await openTo(srv);
+    const second = await openTo(srv);
+    const third = await openTo(srv);
+    await wait(150);
+    expect(first.closeCode).toBeNull();
+    expect(second.closeCode).toBeNull();
+    expect(third.closeCode).toBe(1013);
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('authenticated sockets do not count against the anonymous cap', async () => {
+    const srv = await startServer({ maxAnonymous: 1, authTimeoutMs: 5000 });
+    const a = await openTo(srv);
+    a.send(JSON.stringify({ type: 'auth', token: tokenFor(A) }));
+    await wait(100);
+    const b = await openTo(srv);
+    await wait(100);
+    expect(a.closeCode).toBeNull();
+    expect(b.closeCode).toBeNull();
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+});

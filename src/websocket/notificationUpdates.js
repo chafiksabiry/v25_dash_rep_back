@@ -9,6 +9,8 @@ const logger = require('../utils/logger');
 let wss = null;
 
 const AUTH_TIMEOUT_MS = 5000;
+// Simultaneous sockets that have not authenticated yet, all clients together.
+const MAX_ANONYMOUS_CONNECTIONS = 50;
 // Messages are tiny ({type:'auth',token}); ws would otherwise accept 100 MiB per message.
 const MAX_PAYLOAD_BYTES = 8 * 1024;
 
@@ -52,15 +54,31 @@ async function authenticate(token) {
  * A client receives nothing until it is authenticated. Its rep ids come from the
  * verified token ONLY: any repId sent by the client is ignored.
  */
-function setupNotificationWebSocket(server) {
+function setupNotificationWebSocket(server, options = {}) {
+  const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
+  const maxAnonymous = options.maxAnonymous ?? MAX_ANONYMOUS_CONNECTIONS;
   wss = new WebSocketServer({
     server,
     path: '/notification-updates',
     maxPayload: MAX_PAYLOAD_BYTES,
   });
 
+  const anonymousCount = () => {
+    let n = 0;
+    wss.clients.forEach((c) => {
+      if (!c.repIds) n += 1;
+    });
+    return n;
+  };
+
   wss.on('connection', (ws, req) => {
     ws.repIds = null; // null = not authenticated: never receives broadcasts
+
+    // Cap on simultaneous unauthenticated sockets (this one is already counted).
+    if (anonymousCount() > maxAnonymous) {
+      ws.close(1013, 'too many unauthenticated connections');
+      return;
+    }
 
     // Without an 'error' listener a protocol error (e.g. oversized message) is thrown as an
     // uncaught exception, which would take the whole server down. ws closes the socket itself.
@@ -90,7 +108,7 @@ function setupNotificationWebSocket(server) {
 
     const timer = setTimeout(() => {
       if (!ws.repIds) ws.close(4401, 'authentication timeout');
-    }, AUTH_TIMEOUT_MS);
+    }, authTimeoutMs);
 
     // Kept for client compatibility: existing clients wait for this message before
     // sending anything. It carries no data and does not authenticate the socket.
@@ -164,6 +182,8 @@ function broadcastNotificationUpdate(data) {
 /** Test helper / graceful shutdown. */
 function closeNotificationWebSocket() {
   if (wss) {
+    // ws.close() alone leaves open sockets (and the HTTP server) alive.
+    wss.clients.forEach((client) => client.terminate());
     wss.close();
     wss = null;
   }
