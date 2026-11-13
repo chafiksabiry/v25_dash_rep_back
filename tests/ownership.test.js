@@ -56,6 +56,12 @@ describe('requireProfileOwnership', () => {
     expect(next).not.toHaveBeenCalled();
   });
 
+  test('12-character string → 404 without a query', async () => {
+    const { res } = await run({ params: { id: 'abcdefghijkl' }, user: { userId: A }, authVerified: true });
+    expect(res.status).toHaveBeenCalledWith(404);
+    expect(Agent.findOne).not.toHaveBeenCalled();
+  });
+
   test('unknown profile → 404; invalid id → 404 without a query', async () => {
     agentLookup(null);
     expect((await run({ params: { id: AGENT_A }, user: { userId: A }, authVerified: true })).res.status).toHaveBeenCalledWith(404);
