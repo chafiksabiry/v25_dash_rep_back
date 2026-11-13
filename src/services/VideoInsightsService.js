@@ -213,6 +213,8 @@ const aggregateFromExperiences = (experiences) => {
     if (!va || typeof va !== 'object') return;
 
     const experienceVideoUrl = exp.videoUrl || null;
+    // The presentation video is not an experience entry: no index to link back to.
+    const sourceIndex = exp.isPresentation ? null : expIndex;
 
     (va.spokenLanguages || []).forEach((entry) => {
       if (!entry || !entry.language) return;
@@ -226,7 +228,7 @@ const aggregateFromExperiences = (experiences) => {
         score: typeof entry.score === 'number' ? entry.score : 0,
         evidence: flattenText(entry.evidence),
         experienceVideoUrl,
-        experienceIndex: expIndex,
+        experienceIndex: sourceIndex,
       });
     });
 
@@ -250,7 +252,7 @@ const aggregateFromExperiences = (experiences) => {
         score,
         evidence,
         experienceVideoUrl,
-        experienceIndex: expIndex,
+        experienceIndex: sourceIndex,
         fluencyScore: typeof entry.fluency?.score === 'number' ? entry.fluency.score : score,
         fluencyFeedback: flattenText(entry.fluency?.feedback) || evidence,
         // "Niveau" maps from grammar when available (closest CEFR signal).
@@ -370,7 +372,8 @@ const buildProfileUpdate = (agent, insights) => {
               : existing.assessmentResults?.experienceIndex,
         });
       } else {
-        existing.proficiency = data.proficiency;
+        // CV / manual entry: attach the video assessment but never lower the level.
+        existing.proficiency = maxProficiency(existing.proficiency || 'A1', data.proficiency);
         existing.assessmentResults = videoAssessment;
       }
     } else {
@@ -430,6 +433,24 @@ const buildProfileUpdate = (agent, insights) => {
     }
   });
 
+  // Keep proposals that did not come from a video (e.g. CV import): the video
+  // rebuild only owns the entries tagged VIDEO_SKILL_DETAILS. Same skill twice
+  // → one entry, highest level.
+  ['technical', 'professional', 'soft'].forEach((type) => {
+    const kept = (agent?.proposedSkills?.[type] || []).filter(
+      (entry) => entry && entry.skill && entry.details !== VIDEO_SKILL_DETAILS
+    );
+    if (kept.length === 0) return;
+    const merged = new Map();
+    [...kept, ...proposedSkills[type]].forEach((entry) => {
+      const id = String(entry.skill._id || entry.skill);
+      const current = merged.get(id);
+      if (!current) merged.set(id, { ...entry });
+      else current.level = Math.max(current.level || 0, entry.level || 0);
+    });
+    proposedSkills[type] = Array.from(merged.values());
+  });
+
   set.proposedSkills = proposedSkills;
 
   // Industries & activities — union of existing + detected (critical for matching).
@@ -485,6 +506,27 @@ const stripExperienceLanguageAssessments = (languages = []) =>
   });
 
 /**
+ * personalInfo.presentationVideo.{analysis,...} → experience-shaped entry, or null
+ * when the presentation has no stored analysis.
+ */
+const presentationAsExperience = (agent) => {
+  const raw = agent?.personalInfo?.presentationVideo;
+  // Legacy shape: presentationVideo may be a bare URL string; the analysis is then
+  // stored on the sibling personalInfo.presentationVideoAnalysis.
+  const pv =
+    raw && typeof raw === 'object' ? raw : agent?.personalInfo?.presentationVideoAnalysis;
+  if (!pv || typeof pv !== 'object' || !pv.analysis || typeof pv.analysis !== 'object') return null;
+  const videoUrl = pv.analyzedVideoUrl || pv.url;
+  if (!videoUrl) return null;
+  return {
+    isPresentation: true,
+    videoUrl,
+    videoAnalysis: pv.analysis,
+    videoLanguageAssessment: pv.languageAssessment || {},
+  };
+};
+
+/**
  * Rebuild profile-level skills/languages from experiences that still have a video URL
  * and analysis. Removes stale "Detected from experience video" skills when the source
  * video is gone — user must re-upload and re-analyze.
@@ -493,6 +535,10 @@ const rebuildProfileVideoInsights = (agent) => {
   const validExperiences = (Array.isArray(agent?.experience) ? agent.experience : []).filter(
     (exp) => exp?.videoUrl && exp?.videoAnalysis,
   );
+  // The personal presentation video feeds the same aggregation (never dropped
+  // by a later experience analysis).
+  const presentation = presentationAsExperience(agent);
+  if (presentation) validExperiences.push(presentation);
   const cleanedAgent = {
     ...agent,
     skills: stripVideoDerivedSkills(agent?.skills),
@@ -518,4 +564,5 @@ module.exports = {
   VIDEO_SKILL_DETAILS,
   stripVideoDerivedSkills,
   rebuildProfileVideoInsights,
+  presentationAsExperience,
 };

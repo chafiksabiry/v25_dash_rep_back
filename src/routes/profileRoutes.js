@@ -78,6 +78,24 @@ router.post('/:id/language/accent/recheck', profileController.recheckAccents.bin
 // Analyze experience video with AI (Whisper + GPT-4)
 router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
 
+// Analyze the personal presentation video (no experience context): persists under
+// personalInfo.presentationVideo.* and merges detected skills/sectors/languages.
+router.post(
+  '/:id/presentation/analyze-video',
+  (req, res, next) => {
+    videoUpload.single('video')(req, res, (err) => {
+      if (err) {
+        const code = err.code === 'LIMIT_FILE_SIZE' ? 'VIDEO_TOO_LARGE' : 'UPLOAD_FAILED';
+        const message =
+          err.code === 'LIMIT_FILE_SIZE' ? 'Video file is too large (max 150 MB).' : err.message || 'Video upload failed';
+        return res.status(400).json({ code, message });
+      }
+      next();
+    });
+  },
+  profileController.analyzePresentationVideo.bind(profileController)
+);
+
 // Poll async language video analysis job (must be registered before POST analyze-video)
 router.get(
   '/:id/language/analyze-video/jobs/:jobId',

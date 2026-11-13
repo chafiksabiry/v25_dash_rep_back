@@ -173,6 +173,47 @@ class ProfileRepository {
   }
 
   /**
+   * Persist the presentation-video analysis under personalInfo.presentationVideo.*
+   * (dot paths only: fields owned by the wizard, e.g. `url`, are never touched),
+   * then merge the detected skills/sectors/activities/languages into the agent.
+   * Returns { saved, insightsApplied }.
+   */
+  async savePresentationVideoAnalysis(profileId, payload) {
+    const filter = mongoose.isValidObjectId(profileId)
+      ? { _id: profileId }
+      : { userId: profileId };
+
+    const agent = await Agent.findOne(filter).lean();
+    if (!agent) return { saved: false, insightsApplied: false };
+
+    // presentationVideo is wizard-owned; if it is a bare string, don't turn it into
+    // an object — write next to it instead.
+    const current = agent.personalInfo?.presentationVideo;
+    const base =
+      current && typeof current !== 'object'
+        ? 'personalInfo.presentationVideoAnalysis'
+        : 'personalInfo.presentationVideo';
+
+    const set = {
+      [`${base}.analyzedVideoUrl`]: payload.videoUrl || null,
+      [`${base}.duration`]: payload.duration || null,
+      [`${base}.transcription`]: payload.transcription || '',
+      [`${base}.analysis`]: this.sanitizeAnalysisForStorage(payload.analysis) || {},
+      [`${base}.languageAssessment`]:
+        this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
+      [`${base}.fraudCheck`]: payload.fraudCheck || {},
+      [`${base}.relevance`]: payload.relevance || {},
+      [`${base}.analyzedAt`]: new Date(),
+    };
+
+    const res = await Agent.updateOne(filter, { $set: set });
+    if (res.matchedCount === 0) return { saved: false, insightsApplied: false };
+
+    const insightsApplied = await this.applyVideoInsights(filter);
+    return { saved: true, insightsApplied };
+  }
+
+  /**
    * Persist a dedicated language-tab video assessment onto personalInfo.languages[].
    * Matches by language ObjectId, ISO code, or display name (case-insensitive).
    */
