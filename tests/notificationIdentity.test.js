@@ -124,6 +124,12 @@ describe('POST /upsert: explicit service path', () => {
     expect(notificationService.upsert.mock.calls[0][0]).toBe(SERVICE);
   });
 
+  test('12-character target is not a valid repId → 400', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
+    const res = await upsertAs({ user: { userId: SERVICE }, headers: {}, body: { repId: 'abcdefghijkl' } });
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
   test('invalid target id → 400', async () => {
     process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
     const res = await upsertAs({ user: { userId: SERVICE }, headers: {}, body: { repId: 'nope' } });

@@ -1,7 +1,7 @@
 const notificationService = require('../services/NotificationService');
-const mongoose = require('mongoose');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 
 const isServiceIdentity = (tokenId) =>
   String(process.env.NOTIFICATION_SERVICE_USER_IDS || '')
@@ -31,7 +31,7 @@ async function getRepId(req, res, { allowService = false } = {}) {
   if (allowService && req.authVerified && isServiceIdentity(tokenId)) {
     const target = req.headers['x-agent-id'] || req.headers['x-user-id'] || req.body?.repId;
     if (target) {
-      if (!mongoose.isValidObjectId(target)) {
+      if (!isObjectIdString(String(target))) {
         res.status(400).json({ success: false, message: 'Invalid repId' });
         return null;
       }
@@ -47,7 +47,7 @@ async function getRepId(req, res, { allowService = false } = {}) {
   if (!claimed || String(claimed) === String(tokenId)) return String(tokenId);
 
   try {
-    if (mongoose.isValidObjectId(claimed) && mongoose.isValidObjectId(tokenId)) {
+    if (isObjectIdString(String(claimed)) && isObjectIdString(String(tokenId))) {
       const owned = await Agent.exists({ _id: claimed, userId: tokenId });
       if (owned) return String(claimed);
     }
