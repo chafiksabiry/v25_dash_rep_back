@@ -1,18 +1,8 @@
 const logger = require('../utils/logger');
 
 function errorHandler(err, req, res, next) {
-  // Log error details
-  logger.error(`Error processing ${req.method} ${req.originalUrl}: ${err.message}`, {
-    error: err,
-    request: {
-      method: req.method,
-      url: req.originalUrl,
-      headers: req.headers,
-      params: req.params,
-      query: req.query,
-      body: req.body
-    }
-  });
+  // Log only what is needed to diagnose: never headers (Authorization), body, query or params.
+  logger.error(`Error processing ${req.method} ${req.baseUrl}${req.path}: ${err.message}`);
 
   // Send error response
   res.status(err.status || 500).json({
