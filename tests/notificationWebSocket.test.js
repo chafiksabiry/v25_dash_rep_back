@@ -52,6 +52,47 @@ beforeEach(() => {
 });
 
 describe('notification WebSocket', () => {
+  test("sends 'connected' on open (existing clients wait for it) without authenticating", async () => {
+    const ws = await connect();
+    await wait();
+    expect(ws.received.map((m) => m.type)).toContain('connected');
+    broadcastNotificationUpdate({ repId: A, notification: { id: 'x' } });
+    await wait();
+    expect(notifications(ws)).toHaveLength(0);
+  });
+
+  test('unknown message types are ignored without closing the connection', async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: 'something-else', foo: 1 }));
+    ws.send('not json');
+    await wait(150);
+    expect(ws.closeCode).toBeNull();
+  });
+
+  test("authenticated 'subscribe' is acknowledged with the TOKEN identity, never the client's repId", async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: 'auth', token: tokenFor(A) }));
+    await wait();
+    ws.send(JSON.stringify({ type: 'subscribe', repId: B }));
+    await wait();
+    const ack = ws.received.find((m) => m.type === 'subscribed');
+    expect(ack.repId).toBe(A);
+  });
+
+  test('unauthenticated subscribe gets no acknowledgement', async () => {
+    const ws = await connect();
+    ws.send(JSON.stringify({ type: 'subscribe', repId: A }));
+    await wait();
+    expect(ws.received.some((m) => m.type === 'subscribed')).toBe(false);
+  });
+
+  test('oversized message is refused (maxPayload), connection closed 1009', async () => {
+    const ws = await connect();
+    ws.send('x'.repeat(64 * 1024));
+    await wait(200);
+    expect(ws.closeCode).toBe(1009);
+  });
+
   test('anonymous client receives nothing', async () => {
     const anon = await connect();
     broadcastNotificationUpdate({ repId: A, notification: { id: 1 } });

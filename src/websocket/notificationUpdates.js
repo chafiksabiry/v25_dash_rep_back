@@ -9,6 +9,8 @@ const logger = require('../utils/logger');
 let wss = null;
 
 const AUTH_TIMEOUT_MS = 5000;
+// Messages are tiny ({type:'auth',token}); ws would otherwise accept 100 MiB per message.
+const MAX_PAYLOAD_BYTES = 8 * 1024;
 
 /** Browsers cannot set an Authorization header on a WebSocket, so the token is
  *  sent in a first `{ type: "auth", token }` message (never in the URL, which gets logged).
@@ -54,10 +56,17 @@ function setupNotificationWebSocket(server) {
   wss = new WebSocketServer({
     server,
     path: '/notification-updates',
+    maxPayload: MAX_PAYLOAD_BYTES,
   });
 
   wss.on('connection', (ws, req) => {
     ws.repIds = null; // null = not authenticated: never receives broadcasts
+
+    // Without an 'error' listener a protocol error (e.g. oversized message) is thrown as an
+    // uncaught exception, which would take the whole server down. ws closes the socket itself.
+    ws.on('error', (error) => {
+      logger.warn(`[Notification WS] socket error: ${error.code || error.message}`);
+    });
 
     const authenticateWith = async (token) => {
       const repIds = token ? await authenticate(token) : null;
@@ -71,6 +80,7 @@ function setupNotificationWebSocket(server) {
         return;
       }
       ws.repIds = repIds;
+      ws.primaryRepId = [...repIds][0]; // the token's userId (inserted first)
       try {
         ws.send(JSON.stringify({ type: 'authenticated' }));
       } catch {
@@ -82,6 +92,14 @@ function setupNotificationWebSocket(server) {
       if (!ws.repIds) ws.close(4401, 'authentication timeout');
     }, AUTH_TIMEOUT_MS);
 
+    // Kept for client compatibility: existing clients wait for this message before
+    // sending anything. It carries no data and does not authenticate the socket.
+    try {
+      ws.send(JSON.stringify({ type: 'connected', message: 'Ready for notification updates' }));
+    } catch {
+      /* ignore */
+    }
+
     const headerToken = tokenFromUpgrade(req);
     if (headerToken) authenticateWith(headerToken);
 
@@ -91,7 +109,11 @@ function setupNotificationWebSocket(server) {
         if (data?.type === 'auth' && !ws.repIds) {
           authenticateWith(typeof data.token === 'string' ? data.token : null);
         }
-        // "subscribe" and any client-supplied repId are intentionally ignored.
+        // "subscribe": acknowledged only for an authenticated socket, and always with the
+        // identity derived from the token. A client-supplied repId is never used.
+        if (data?.type === 'subscribe' && ws.repIds) {
+          ws.send(JSON.stringify({ type: 'subscribed', repId: ws.primaryRepId }));
+        }
       } catch {
         /* ignore malformed */
       }
