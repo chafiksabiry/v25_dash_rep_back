@@ -137,3 +137,34 @@ describe('controller logs', () => {
     expect(src).not.toMatch(/\$\{token\}/);
   });
 });
+
+describe('observability of the legacy fallback and request logs', () => {
+  test('header fallback usage is logged with the path only, never the identity', () => {
+    process.env.ALLOW_HEADER_AUTH = 'true';
+    const logger = require('../src/utils/logger');
+    logger.warn.mockClear();
+    const { authenticateToken } = require('../src/middleware/auth');
+    authenticateToken(
+      { headers: { 'x-user-id': 'SECRET-IDENTITY' }, method: 'GET', baseUrl: '/api/x', path: '/y' },
+      mkRes(),
+      jest.fn()
+    );
+    const logged = JSON.stringify(logger.warn.mock.calls);
+    expect(logged).toContain('/api/x/y');
+    expect(logged).not.toContain('SECRET-IDENTITY');
+  });
+
+  test('requestLogger drops the query string (may contain a token)', () => {
+    const logger = require('../src/utils/logger');
+    logger.info.mockClear();
+    const requestLogger = require('../src/middleware/requestLogger');
+    requestLogger(
+      { method: 'GET', originalUrl: '/api/notifications?token=SECRET-QUERY&a=1', ip: '1.1.1.1' },
+      { send: jest.fn(), statusCode: 200 },
+      jest.fn()
+    );
+    const logged = JSON.stringify(logger.info.mock.calls);
+    expect(logged).toContain('/api/notifications');
+    expect(logged).not.toContain('SECRET-QUERY');
+  });
+});
