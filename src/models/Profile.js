@@ -251,6 +251,13 @@ const profileSchema = new mongoose.Schema({
     soft: [skillSchema],
     contactCenter: [contactCenterSkillSchema]
   },
+  // Video-detected skills awaiting confirm/dismiss in the Skills tab (not used for matching).
+  proposedSkills: {
+    technical: [skillSchema],
+    professional: [skillSchema],
+    soft: [skillSchema]
+  },
+  excludedProposedSkillIds: [{ type: String }],
   achievements: [achievementSchema],
   experience: [experienceSchema],
   lastUpdated: { type: Date, default: Date.now }

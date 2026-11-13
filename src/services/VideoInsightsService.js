@@ -32,11 +32,11 @@ const normalizeProficiency = (level, score) => {
   }
 
   if (typeof score === 'number') {
-    if (score >= 95) return 'C2';
-    if (score >= 85) return 'C1';
-    if (score >= 70) return 'B2';
-    if (score >= 55) return 'B1';
-    if (score >= 40) return 'A2';
+    if (score >= 93) return 'C2';
+    if (score >= 82) return 'C1';
+    if (score >= 68) return 'B2';
+    if (score >= 53) return 'B1';
+    if (score >= 39) return 'A2';
     return 'A1';
   }
 
@@ -71,11 +71,22 @@ const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) =
   const safeScore = typeof score === 'number' ? Math.round(score) : 0;
   const feedback = evidence || 'Detected from experience video analysis';
   const verifiedProficiency = extra.verifiedProficiency || proficiency || null;
+  const pick = (value, fallback = safeScore) =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : fallback;
 
   return {
-    completeness: { score: safeScore, feedback },
-    fluency: { score: safeScore, feedback },
-    proficiency: { score: safeScore, feedback },
+    completeness: {
+      score: pick(extra.completenessScore),
+      feedback: extra.completenessFeedback || feedback,
+    },
+    fluency: {
+      score: pick(extra.fluencyScore),
+      feedback: extra.fluencyFeedback || feedback,
+    },
+    proficiency: {
+      score: pick(extra.proficiencyScore),
+      feedback: extra.proficiencyFeedback || feedback,
+    },
     overall: {
       score: safeScore,
       strengths: verifiedProficiency
@@ -86,13 +97,19 @@ const buildVideoAssessmentResults = (score, proficiency, evidence, extra = {}) =
     verifiedProficiency,
     source: extra.source || 'video',
     completedAt: new Date(),
-    ...extra,
+    experienceVideoUrl: extra.experienceVideoUrl || null,
+    experienceIndex: typeof extra.experienceIndex === 'number' ? extra.experienceIndex : null,
+    videoUrl: extra.videoUrl || null,
+    transcription: extra.transcription || null,
   };
 };
 
 const mergeAssessmentResults = (existing, incoming) => {
   if (!existing) return incoming;
   if (!incoming) return existing;
+
+  const preferIncomingOverall =
+    (incoming.overall?.score || 0) >= (existing.overall?.score || 0);
 
   return {
     completeness: {
@@ -115,14 +132,65 @@ const mergeAssessmentResults = (existing, incoming) => {
     },
     overall: {
       score: maxScore(existing.overall?.score, incoming.overall?.score),
-      strengths: incoming.overall?.score >= (existing.overall?.score || 0)
+      strengths: preferIncomingOverall
         ? incoming.overall?.strengths
         : existing.overall?.strengths,
       areasForImprovement: existing.overall?.areasForImprovement || incoming.overall?.areasForImprovement || '',
     },
     source: incoming.source || existing.source || 'video',
     completedAt: incoming.completedAt || existing.completedAt,
+    // Preserve experience-video linkage (needed by the Languages tab).
+    verifiedProficiency:
+      incoming.verifiedProficiency || existing.verifiedProficiency || null,
+    experienceVideoUrl:
+      incoming.experienceVideoUrl || existing.experienceVideoUrl || null,
+    experienceIndex:
+      typeof incoming.experienceIndex === 'number'
+        ? incoming.experienceIndex
+        : existing.experienceIndex,
+    videoUrl: incoming.videoUrl || existing.videoUrl || null,
+    transcription: incoming.transcription || existing.transcription || null,
   };
+};
+
+/** Normalize a language ref (ObjectId, populated doc, or string) to an id string. */
+const languageRefId = (ref) => {
+  if (!ref) return null;
+  if (typeof ref === 'object') {
+    const id = ref._id || ref.id;
+    return id ? String(id) : null;
+  }
+  const str = String(ref);
+  return str && str !== '[object Object]' ? str : null;
+};
+
+const upsertLangInsight = (langMap, id, data) => {
+  if (!id || !data?.proficiency) return;
+  const current = langMap.get(id);
+  if (!current) {
+    langMap.set(id, data);
+    return;
+  }
+  const keepCurrent = current.score > data.score;
+  const winner = keepCurrent ? current : data;
+  langMap.set(id, {
+    proficiency: maxProficiency(current.proficiency, data.proficiency),
+    score: maxScore(current.score, data.score),
+    evidence: winner.evidence || current.evidence || data.evidence,
+    experienceVideoUrl: winner.experienceVideoUrl || current.experienceVideoUrl || data.experienceVideoUrl,
+    experienceIndex:
+      typeof winner.experienceIndex === 'number'
+        ? winner.experienceIndex
+        : current.experienceIndex ?? data.experienceIndex,
+    fluencyScore: maxScore(current.fluencyScore, data.fluencyScore),
+    fluencyFeedback: winner.fluencyFeedback || current.fluencyFeedback || data.fluencyFeedback,
+    proficiencyScore: maxScore(current.proficiencyScore, data.proficiencyScore),
+    proficiencyFeedback:
+      winner.proficiencyFeedback || current.proficiencyFeedback || data.proficiencyFeedback,
+    completenessScore: maxScore(current.completenessScore, data.completenessScore),
+    completenessFeedback:
+      winner.completenessFeedback || current.completenessFeedback || data.completenessFeedback,
+  });
 };
 
 /**
@@ -144,28 +212,69 @@ const aggregateFromExperiences = (experiences) => {
     const va = exp && exp.videoAnalysis;
     if (!va || typeof va !== 'object') return;
 
+    const experienceVideoUrl = exp.videoUrl || null;
+
     (va.spokenLanguages || []).forEach((entry) => {
       if (!entry || !entry.language) return;
-      const id = String(entry.language._id || entry.language);
+      const id = languageRefId(entry.language);
+      if (!id) return;
       const prof = normalizeProficiency(entry.level, entry.score);
       if (!prof) return;
 
-      const score = typeof entry.score === 'number' ? entry.score : 0;
-      const evidence = flattenText(entry.evidence);
-      const experienceVideoUrl = exp.videoUrl || null;
-      const current = langMap.get(id);
-      if (!current) {
-        langMap.set(id, { proficiency: prof, score, evidence, experienceVideoUrl, experienceIndex: expIndex });
-        return;
-      }
+      upsertLangInsight(langMap, id, {
+        proficiency: prof,
+        score: typeof entry.score === 'number' ? entry.score : 0,
+        evidence: flattenText(entry.evidence),
+        experienceVideoUrl,
+        experienceIndex: expIndex,
+      });
+    });
 
-      const keepCurrent = current.score > score;
-      langMap.set(id, {
-        proficiency: maxProficiency(current.proficiency, prof),
-        score: maxScore(current.score, score),
-        evidence: keepCurrent ? current.evidence : (evidence || current.evidence),
-        experienceVideoUrl: keepCurrent ? current.experienceVideoUrl : experienceVideoUrl,
-        experienceIndex: keepCurrent ? current.experienceIndex : expIndex,
+    // Dedicated CEFR assessment often has the spoken language even when
+    // spokenLanguages was empty / unresolved — critical for Languages-tab verification.
+    const assessedLanguages = exp?.videoLanguageAssessment?.languages;
+    (Array.isArray(assessedLanguages) ? assessedLanguages : []).forEach((entry) => {
+      if (!entry) return;
+      const id = languageRefId(entry.language);
+      if (!id) return;
+      const score = typeof entry.overallScore === 'number' ? entry.overallScore : 0;
+      const prof = normalizeProficiency(entry.cefr, score);
+      if (!prof) return;
+      const evidence =
+        flattenText(entry.strengths) ||
+        flattenText(entry.fluency?.feedback) ||
+        'Detected from experience video analysis';
+
+      upsertLangInsight(langMap, id, {
+        proficiency: prof,
+        score,
+        evidence,
+        experienceVideoUrl,
+        experienceIndex: expIndex,
+        fluencyScore: typeof entry.fluency?.score === 'number' ? entry.fluency.score : score,
+        fluencyFeedback: flattenText(entry.fluency?.feedback) || evidence,
+        // "Niveau" maps from grammar when available (closest CEFR signal).
+        proficiencyScore:
+          typeof entry.grammar?.score === 'number'
+            ? entry.grammar.score
+            : typeof entry.vocabulary?.score === 'number'
+              ? entry.vocabulary.score
+              : score,
+        proficiencyFeedback:
+          flattenText(entry.grammar?.feedback) ||
+          flattenText(entry.vocabulary?.feedback) ||
+          evidence,
+        // "Complét." maps from coherence / vocabulary coverage of the sample.
+        completenessScore:
+          typeof entry.coherence?.score === 'number'
+            ? entry.coherence.score
+            : typeof entry.vocabulary?.score === 'number'
+              ? entry.vocabulary.score
+              : score,
+        completenessFeedback:
+          flattenText(entry.coherence?.feedback) ||
+          flattenText(entry.vocabulary?.feedback) ||
+          evidence,
       });
     });
 
@@ -203,11 +312,14 @@ const buildProfileUpdate = (agent, insights) => {
   const set = {};
   const { langMap, skillMaps, industryIds, activityIds } = insights;
 
-  // Languages — keep existing assessment data, raise proficiency & scores to max.
+  // Languages — keep existing CV / manual entries; ADD languages detected in
+  // experience videos (never replace the CV list wholesale). For duplicates,
+  // the higher proficiency / skill level wins (additive, never destructive).
   const existingLanguages = agent?.personalInfo?.languages || [];
   const languageById = new Map();
   existingLanguages.forEach((lang) => {
-    if (lang && lang.language) languageById.set(String(lang.language), { ...lang });
+    const id = languageRefId(lang?.language);
+    if (id) languageById.set(id, { ...lang });
   });
 
   const excluded = new Set(
@@ -232,6 +344,12 @@ const buildProfileUpdate = (agent, insights) => {
       verifiedProficiency: data.proficiency,
       experienceVideoUrl: data.experienceVideoUrl || null,
       experienceIndex: typeof data.experienceIndex === 'number' ? data.experienceIndex : null,
+      fluencyScore: data.fluencyScore,
+      fluencyFeedback: data.fluencyFeedback,
+      proficiencyScore: data.proficiencyScore,
+      proficiencyFeedback: data.proficiencyFeedback,
+      completenessScore: data.completenessScore,
+      completenessFeedback: data.completenessFeedback,
     });
 
     if (existing) {
@@ -268,7 +386,17 @@ const buildProfileUpdate = (agent, insights) => {
     set['personalInfo.languages'] = Array.from(languageById.values());
   }
 
-  // Skills — add detected skills, keeping the highest level per skill.
+  // Skills from video are PROPOSALS only — never auto-confirm into the profile.
+  // Matching relies on industries/activities; the rep confirms skills in the Skills tab.
+  const proposedSkills = {
+    technical: [],
+    professional: [],
+    soft: [],
+  };
+  const excludedProposed = new Set(
+    (agent?.excludedProposedSkillIds || []).map((id) => String(id))
+  );
+
   ['technical', 'professional', 'soft'].forEach((type) => {
     const detected = skillMaps[type];
     if (!detected || detected.size === 0) return;
@@ -284,16 +412,27 @@ const buildProfileUpdate = (agent, insights) => {
       if (!objectId) return;
       const current = byId.get(id);
       if (current) {
+        // Already confirmed on the profile — only raise the level.
         current.level = Math.max(current.level || 0, level);
-      } else {
-        byId.set(id, { skill: objectId, level, details: VIDEO_SKILL_DETAILS });
+        return;
       }
+      if (excludedProposed.has(id)) return;
+      proposedSkills[type].push({
+        skill: objectId,
+        level,
+        details: VIDEO_SKILL_DETAILS,
+      });
     });
 
-    set[`skills.${type}`] = Array.from(byId.values());
+    // Persist level upgrades for skills the rep already confirmed.
+    if (detected.size > 0) {
+      set[`skills.${type}`] = Array.from(byId.values());
+    }
   });
 
-  // Industries & activities — union of existing + detected.
+  set.proposedSkills = proposedSkills;
+
+  // Industries & activities — union of existing + detected (critical for matching).
   if (industryIds.size > 0) {
     const union = new Map();
     (agent?.professionalSummary?.industries || []).forEach((id) => {

@@ -469,6 +469,160 @@ class ProfileController {
     }
   }
 
+  /**
+   * Re-run the face/identity check of every experience video against the
+   * current profile photo. Index 0 is included: a falsy index must not skip
+   * the first experience.
+   */
+  async recheckIdentity(req, res) {
+    try {
+      const profileId = req.params.id;
+      const referencePhotoUrl = await this.profileRepository.getReferencePhotoUrl(profileId);
+      if (!referencePhotoUrl) {
+        return res.status(400).json({ message: 'No profile photo to compare against' });
+      }
+
+      const experiences = await this.profileRepository.listExperiences(profileId);
+      const rows = [];
+
+      for (let index = 0; index < experiences.length; index += 1) {
+        const exp = experiences[index] || {};
+        const publicId = this.videoAnalysisService.cloudinaryVideoPublicId(exp.videoUrl);
+        if (!publicId) {
+          rows.push({ index, skipped: true, reason: 'no-video' });
+          continue;
+        }
+
+        const fraudCheck = await this.videoAnalysisService.detectFacesAndFraud(
+          publicId,
+          typeof exp.videoDuration === 'number' ? exp.videoDuration : null,
+          referencePhotoUrl
+        );
+        rows.push({ index, fraudCheck });
+      }
+
+      const anchor = rows.find(
+        (row) =>
+          row.fraudCheck &&
+          row.fraudCheck.identityMatch === true &&
+          (row.fraudCheck.identityConfidence || 0) >= 60
+      );
+      if (anchor) {
+        rows.forEach((row) => {
+          const fraud = row.fraudCheck;
+          if (!fraud) return;
+          const weakNo = fraud.identityMatch === false && (fraud.identityConfidence || 0) < 70;
+          const unsure = fraud.identityMatch == null;
+          const liveSingleFace =
+            fraud.faceDetected === true &&
+            (fraud.faceCount == null || fraud.faceCount <= 1) &&
+            fraud.looksLive === true &&
+            fraud.samePersonAcrossFrames !== false;
+          if (!(weakNo || unsure) || !liveSingleFace) return;
+          const mismatch = /profile photo|photo de profil/i;
+          row.fraudCheck = {
+            ...fraud,
+            identityMatch: true,
+            identityConfidence: Math.max(fraud.identityConfidence || 0, 60),
+            fraudRisk: 'low',
+            reasons: (fraud.reasons || []).filter(
+              (reason) => !mismatch.test(`${reason?.en || ''} ${reason?.fr || ''}`)
+            ),
+          };
+        });
+      }
+
+      const results = [];
+      for (const row of rows) {
+        if (!row.fraudCheck) {
+          results.push({ index: row.index, skipped: true, reason: row.reason || 'no-video' });
+          continue;
+        }
+        const saved = await this.profileRepository.updateExperienceFraudCheck(
+          profileId,
+          row.index,
+          row.fraudCheck
+        );
+        results.push({
+          index: row.index,
+          saved,
+          identityMatch: row.fraudCheck.identityMatch,
+          identityConfidence: row.fraudCheck.identityConfidence,
+          fraudRisk: row.fraudCheck.fraudRisk,
+        });
+        logger.info(
+          `Identity recheck profile ${profileId} experience #${row.index}: ` +
+            `match=${row.fraudCheck.identityMatch} confidence=${row.fraudCheck.identityConfidence} risk=${row.fraudCheck.fraudRisk}`
+        );
+      }
+
+      const updated = results.filter((row) => row.saved).length;
+      res.json({ updated, total: experiences.length, results });
+    } catch (error) {
+      logger.error(`Error in recheckIdentity: ${error.message}`, { error });
+      res.status(500).json({ message: 'Identity recheck failed', error: error.message });
+    }
+  }
+
+  /**
+   * Measure accent from the stored audio of each experience video.
+   * CEFR and sub-scores stay as they are. Index 0 is included.
+   */
+  async recheckAccents(req, res) {
+    try {
+      const profileId = req.params.id;
+      const experiences = await this.profileRepository.listExperiences(profileId);
+      const results = [];
+
+      for (let index = 0; index < experiences.length; index += 1) {
+        const exp = experiences[index] || {};
+        const assessment = exp.videoLanguageAssessment || {};
+        const languages = Array.isArray(assessment.languages) ? assessment.languages : [];
+        const singleAccent = assessment.accent && !languages.length ? [assessment] : [];
+        const entries = languages.length ? languages : singleAccent;
+        if (!entries.length) {
+          results.push({ index, skipped: true, reason: 'no-language-assessment' });
+          continue;
+        }
+        if (entries.every((entry) => entry?.accent?.source === 'audio')) {
+          results.push({ index, skipped: true, reason: 'already-heard' });
+          continue;
+        }
+
+        const languageName =
+          entries[0]?.language?.name ||
+          entries[0]?.languageName ||
+          assessment.detectedLanguage ||
+          '';
+        const accent = await this.videoAnalysisService.measureStoredVideoAccent(exp.videoUrl, languageName);
+        if (!accent) {
+          results.push({ index, skipped: true, reason: 'accent-unavailable' });
+          continue;
+        }
+
+        const next = languages.length
+          ? { ...assessment, languages: languages.map((entry) => ({ ...entry, accent })) }
+          : { ...assessment, accent };
+        const saved = await this.profileRepository.updateExperienceLanguageAssessment(profileId, index, next);
+        results.push({
+          index,
+          saved,
+          category: accent.category,
+          variety: accent.variety?.fr || accent.variety?.en || '',
+        });
+        logger.info(
+          `Accent recheck profile ${profileId} experience #${index}: ${accent.category} ${accent.variety?.fr || ''}`
+        );
+      }
+
+      const updated = results.filter((row) => row.saved).length;
+      res.json({ updated, total: experiences.length, results });
+    } catch (error) {
+      logger.error(`Error in recheckAccents: ${error.message}`, { error });
+      res.status(500).json({ message: 'Accent recheck failed', error: error.message });
+    }
+  }
+
   async analyzeExperienceVideo(req, res) {
     try {
       if (!req.file) {
@@ -481,6 +635,22 @@ class ProfileController {
       const experienceContext = {
         title: req.body.title || '',
         company: req.body.company || '',
+        description: req.body.description || '',
+        responsibilities: (() => {
+          if (Array.isArray(req.body.responsibilities)) return req.body.responsibilities;
+          if (typeof req.body.responsibilities === 'string' && req.body.responsibilities.trim()) {
+            try {
+              const parsed = JSON.parse(req.body.responsibilities);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {
+              return req.body.responsibilities
+                .split(/\n|;|•/)
+                .map((r) => r.trim())
+                .filter(Boolean);
+            }
+          }
+          return [];
+        })(),
         referencePhotoUrl,
       };
 
