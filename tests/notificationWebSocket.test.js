@@ -38,7 +38,8 @@ const notifications = (ws) => ws.received.filter((m) => m.type === 'notification
 beforeAll(async () => {
   process.env.JWT_SECRET = SECRET;
   server = http.createServer();
-  setupNotificationWebSocket(server);
+  // Generous caps: these tests deliberately leave many sockets open on one address.
+  setupNotificationWebSocket(server, { maxAnonymous: 1000, maxAnonymousPerIp: 1000 });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   port = server.address().port;
 });
@@ -86,7 +87,7 @@ describe('notification WebSocket', () => {
     expect(ws.received.some((m) => m.type === 'subscribed')).toBe(false);
   });
 
-  test('oversized message is refused (maxPayload), connection closed 1009', async () => {
+  test('oversized message is refused (maxPayload 16 KiB), connection closed 1009', async () => {
     const ws = await connect();
     ws.send('x'.repeat(64 * 1024));
     await wait(200);
@@ -181,9 +182,9 @@ describe('unauthenticated socket limits', () => {
     await new Promise((r) => srv.listen(0, '127.0.0.1', r));
     return srv;
   };
-  const openTo = (srv) =>
+  const openTo = (srv, headers) =>
     new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${srv.address().port}/notification-updates`);
+      const ws = new WebSocket(`ws://127.0.0.1:${srv.address().port}/notification-updates`, { headers });
       ws.closeCode = null;
       ws.on('close', (code) => { ws.closeCode = code; });
       ws.on('error', reject);
@@ -233,6 +234,40 @@ describe('unauthenticated socket limits', () => {
     await wait(100);
     expect(a.closeCode).toBeNull();
     expect(b.closeCode).toBeNull();
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('per-IP cap: one address cannot exhaust the global cap for others', async () => {
+    const srv = await startServer({ maxAnonymous: 50, maxAnonymousPerIp: 2, authTimeoutMs: 5000 });
+    const attacker = [];
+    for (let i = 0; i < 4; i += 1) attacker.push(await openTo(srv, { 'X-Forwarded-For': '203.0.113.9' }));
+    const legit = await openTo(srv, { 'X-Forwarded-For': '198.51.100.7' });
+    await wait(200);
+    expect(attacker.filter((w) => w.closeCode === 1013)).toHaveLength(2); // 3rd and 4th refused
+    expect(legit.closeCode).toBeNull(); // another address is not affected
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('X-Forwarded-For: only the LAST entry counts (earlier ones are client-supplied)', async () => {
+    const srv = await startServer({ maxAnonymousPerIp: 1, authTimeoutMs: 5000 });
+    const a = await openTo(srv, { 'X-Forwarded-For': '1.1.1.1, 203.0.113.9' });
+    const b = await openTo(srv, { 'X-Forwarded-For': '2.2.2.2, 203.0.113.9' }); // same real address
+    await wait(150);
+    expect(a.closeCode).toBeNull();
+    expect(b.closeCode).toBe(1013);
+    closeNotificationWebSocket();
+    await new Promise((r) => srv.close(r));
+  });
+
+  test('a token of ~10 KiB is accepted (maxPayload 16 KiB)', async () => {
+    const srv = await startServer({ authTimeoutMs: 5000 });
+    const big = jwt.sign({ userId: A, pad: 'x'.repeat(10 * 1024) }, SECRET);
+    const ws = await openTo(srv);
+    ws.send(JSON.stringify({ type: 'auth', token: big }));
+    await wait(150);
+    expect(ws.closeCode).toBeNull();
     closeNotificationWebSocket();
     await new Promise((r) => srv.close(r));
   });
