@@ -111,6 +111,25 @@ describe('compare-and-set against concurrent wizard writes', () => {
   });
 });
 
+describe('staleness marker', () => {
+  test('analyzedForPublicId (wizard publicId at request time) is stored, never the wizard publicId field', async () => {
+    const repo = new ProfileRepository();
+    repo.applyVideoInsights = jest.fn().mockResolvedValue(true);
+    Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, personalInfo: { presentationVideo: { url: 'w', publicId: 'pid-2' } } }) });
+    Agent.updateOne.mockResolvedValue({ matchedCount: 1 });
+    await repo.savePresentationVideoAnalysis(String(id), { ...payload, analyzedForPublicId: 'pid-1' });
+    const set = Agent.updateOne.mock.calls[0][1].$set;
+    expect(set['personalInfo.presentationVideo.analyzedForPublicId']).toBe('pid-1');
+    expect(Object.keys(set)).not.toContain('personalInfo.presentationVideo.publicId');
+  });
+
+  test('resolveAgentIdentity exposes the wizard publicId', async () => {
+    const repo = new ProfileRepository();
+    Agent.findOne.mockReturnValue({ lean: () => Promise.resolve({ _id: id, userId: 'u', personalInfo: { presentationVideo: { url: 'w', publicId: 'pid-1' } } }) });
+    expect((await repo.resolveAgentIdentity(String(id))).presentationVideoPublicId).toBe('pid-1');
+  });
+});
+
 describe('resolveAgentIdentity', () => {
   test('matches on _id OR userId', async () => {
     const repo = new ProfileRepository();

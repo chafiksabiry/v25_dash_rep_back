@@ -106,6 +106,15 @@ describe('runPresentationAnalysis', () => {
     });
   });
 
+  test('persists the wizard publicId at request time as analyzedForPublicId', async () => {
+    const d = deps();
+    d.profileRepository.resolveAgentIdentity.mockResolvedValue({
+      _id: 'agentA', userId: 'userA', presentationVideoUrl: null, presentationVideoPublicId: 'pid-1',
+    });
+    await runPresentationAnalysis(d);
+    expect(d.profileRepository.savePresentationVideoAnalysis.mock.calls[0][1].analyzedForPublicId).toBe('pid-1');
+  });
+
   describe('single Cloudinary copy', () => {
     test('wizard already has the video → analysis copy not referenced and deleted', async () => {
       const d = deps();

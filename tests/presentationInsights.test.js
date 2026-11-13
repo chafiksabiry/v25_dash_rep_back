@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const {
   rebuildProfileVideoInsights,
   VIDEO_SKILL_DETAILS,
+  isPresentationAnalysisStale,
 } = require('../src/services/VideoInsightsService');
 
 const oid = () => new mongoose.Types.ObjectId();
@@ -145,5 +146,47 @@ describe('presentation video → profile merge', () => {
     const set = rebuildProfileVideoInsights({ personalInfo: {} });
     expect(set['personalInfo.languages']).toBeUndefined();
     expect(ensure(set, 'skills.technical')).toEqual([]);
+  });
+});
+
+describe('stale presentation analysis (wizard re-recorded another video)', () => {
+  const pvWith = (extra) => ({
+    ...presentation(fullAnalysis()),
+    publicId: 'wizard-new',
+    ...extra,
+  });
+
+  test('analyzedForPublicId ≠ current publicId → stale', () => {
+    const agent = { personalInfo: { presentationVideo: pvWith({ analyzedForPublicId: 'wizard-old' }) } };
+    expect(isPresentationAnalysisStale(agent)).toBe(true);
+  });
+
+  test('same publicId → fresh; both absent → fresh', () => {
+    expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: pvWith({ analyzedForPublicId: 'wizard-new' }) } })).toBe(false);
+    expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: presentation(fullAnalysis()) } })).toBe(false);
+  });
+
+  test('analysis made without a publicId but wizard now has one → stale', () => {
+    expect(isPresentationAnalysisStale({ personalInfo: { presentationVideo: pvWith({}) } })).toBe(true);
+  });
+
+  test('a stale analysis contributes nothing and its old video proposals are removed', () => {
+    const agent = {
+      proposedSkills: {
+        technical: [{ skill: ids.excel, level: 3, details: VIDEO_SKILL_DETAILS }],
+        professional: [{ skill: ids.sales, level: 3, details: 'From CV' }],
+        soft: [],
+      },
+      personalInfo: { presentationVideo: pvWith({ analyzedForPublicId: 'wizard-old' }) },
+    };
+    const set = rebuildProfileVideoInsights(agent);
+    expect(set.proposedSkills.technical).toHaveLength(0); // stale video proposal dropped
+    expect(set.proposedSkills.professional).toHaveLength(1); // CV proposal kept
+    expect(set['personalInfo.languages']).toBeUndefined();
+  });
+
+  test('a fresh analysis is used', () => {
+    const agent = { personalInfo: { presentationVideo: pvWith({ analyzedForPublicId: 'wizard-new' }) } };
+    expect(rebuildProfileVideoInsights(agent).proposedSkills.technical).toHaveLength(1);
   });
 });

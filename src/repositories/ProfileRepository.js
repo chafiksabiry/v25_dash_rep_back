@@ -186,7 +186,9 @@ class ProfileRepository {
     const pv = agent.personalInfo?.presentationVideo;
     const presentationVideoUrl =
       typeof pv === 'string' ? pv : pv && typeof pv === 'object' ? pv.url || null : null;
-    return { _id: agent._id, userId: agent.userId, presentationVideoUrl };
+    const presentationVideoPublicId =
+      pv && typeof pv === 'object' ? pv.publicId || null : null;
+    return { _id: agent._id, userId: agent.userId, presentationVideoUrl, presentationVideoPublicId };
   }
 
   /**
@@ -205,6 +207,8 @@ class ProfileRepository {
     const fields = {
       analyzedVideoUrl: payload.videoUrl || null,
       analyzedDuration: payload.duration || null,
+      // Wizard publicId when the analysis was requested: the analysis is stale once it changes.
+      analyzedForPublicId: payload.analyzedForPublicId || null,
       transcription: payload.transcription || '',
       analysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
       languageAssessment: this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},

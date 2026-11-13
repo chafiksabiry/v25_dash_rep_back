@@ -127,7 +127,11 @@ const runPresentationAnalysis = async ({
   // One Cloudinary copy per candidate: when the wizard already holds the
   // presentation video, the analysis copy is not referenced and is deleted.
   const reuseWizardVideo = !!owner.presentationVideoUrl && result.videoUrl !== owner.presentationVideoUrl;
-  const toPersist = reuseWizardVideo ? { ...result, videoUrl: null } : result;
+  const toPersist = {
+    ...result,
+    videoUrl: reuseWizardVideo ? null : result.videoUrl,
+    analyzedForPublicId: owner.presentationVideoPublicId || null,
+  };
 
   let saved = false;
   let insightsApplied = false;

@@ -506,6 +506,17 @@ const stripExperienceLanguageAssessments = (languages = []) =>
   });
 
 /**
+ * The wizard rewrites presentationVideo.{url,publicId,duration} when the rep records
+ * another video, leaving our analyzed* fields behind. The analysis is stale when the
+ * publicId it was made for differs from the current wizard publicId.
+ */
+const isPresentationAnalysisStale = (agent) => {
+  const pv = agent?.personalInfo?.presentationVideo;
+  if (!pv || typeof pv !== 'object' || !pv.analysis) return false;
+  return (pv.analyzedForPublicId ?? null) !== (pv.publicId ?? null);
+};
+
+/**
  * personalInfo.presentationVideo.{analysis,...} → experience-shaped entry, or null
  * when the presentation has no stored analysis.
  */
@@ -516,6 +527,7 @@ const presentationAsExperience = (agent) => {
   const pv =
     raw && typeof raw === 'object' ? raw : agent?.personalInfo?.presentationVideoAnalysis;
   if (!pv || typeof pv !== 'object' || !pv.analysis || typeof pv.analysis !== 'object') return null;
+  if (isPresentationAnalysisStale(agent)) return null;
   const videoUrl =
     pv.analyzedVideoUrl || pv.url || (typeof raw === 'string' ? raw : null);
   if (!videoUrl) return null;
@@ -566,4 +578,5 @@ module.exports = {
   stripVideoDerivedSkills,
   rebuildProfileVideoInsights,
   presentationAsExperience,
+  isPresentationAnalysisStale,
 };
