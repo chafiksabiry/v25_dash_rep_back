@@ -7,7 +7,7 @@
 
 - Toutes les routes ci-dessous passent par `authenticateToken` (`routes/profileRoutes.js:20`). Aucune ne vérifie que `:id` appartient au jeton.
 - **Presque toutes sont des mandataires (proxy)** : `ProfileService` / `ExternalProfileService` appellent le service externe `REP_PROFILE_API` (`/profiles/:id`, `/profiles/:id/plan`) en **relayant le jeton Bearer de l'appelant** (`ExternalProfileService.js:46,88` ; `ProfileService.js:53-54,301-302`). Le contrôle d'accès effectif dépend donc **de ce service externe**, non vérifiable depuis ce dépôt.
-- Conséquence avec `ALLOW_HEADER_AUTH=true` (appelant sans jeton) : la requête passe ici mais part **sans jeton** vers le service externe (comportement à confirmer côté service externe).
+- Conséquence avec `ALLOW_HEADER_AUTH=true` (appelant sans jeton) : la requête passe ici. Via `ExternalProfileService` l'en-tête `Authorization` est **omis** ; via `ProfileService.updateProfile` / `getPlan` il est envoyé sans condition (`Bearer ${token}`), donc **`Bearer undefined`** (correction du relecteur). Comportement du service externe dans les deux cas à confirmer.
 - **Qui appelle** : aucun appelant n'est visible dans ce dépôt (backend seul). La colonne « Appelant (d'après le code) » indique donc uniquement ce qui est déductible ici ; les clients (front REPS, entreprises, autres services) sont à renseigner par la Sécurité / les sessions front.
 
 ## Routes à classer
