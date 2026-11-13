@@ -3,6 +3,13 @@ const mongoose = require('mongoose');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
 
+const isServiceIdentity = (tokenId) =>
+  String(process.env.NOTIFICATION_SERVICE_USER_IDS || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .includes(String(tokenId));
+
 /**
  * Resolve the rep whose notifications the caller may access, from the VERIFIED
  * token identity only. x-agent-id / x-user-id are never trusted on their own:
@@ -10,11 +17,27 @@ const logger = require('../utils/logger');
  * owned by that user (the notifications may be keyed by either id).
  * Sends the 401/403 response itself and returns null when access is refused.
  */
-async function getRepId(req, res) {
+async function getRepId(req, res, { allowService = false } = {}) {
   const tokenId = req.user?.userId || req.user?.id;
   if (!tokenId) {
     res.status(401).json({ success: false, message: 'Unauthorized' });
     return null;
+  }
+
+  // Explicit, authenticated path for other services that create notifications for a
+  // rep (POST /upsert only): a VERIFIED token whose userId is listed in
+  // NOTIFICATION_SERVICE_USER_IDS (comma-separated) may name the target rep through
+  // x-agent-id / x-user-id or body.repId. Empty by default: nobody has this power.
+  if (allowService && req.authVerified && isServiceIdentity(tokenId)) {
+    const target = req.headers['x-agent-id'] || req.headers['x-user-id'] || req.body?.repId;
+    if (target) {
+      if (!mongoose.isValidObjectId(target)) {
+        res.status(400).json({ success: false, message: 'Invalid repId' });
+        return null;
+      }
+      logger.info('Notification created on behalf of a rep by an allow-listed service identity');
+      return String(target);
+    }
   }
 
   // Legacy header-only identification (ALLOW_HEADER_AUTH): req.user already is the header.
@@ -69,7 +92,7 @@ class NotificationController {
 
   async upsert(req, res) {
     try {
-      const repId = await getRepId(req, res);
+      const repId = await getRepId(req, res, { allowService: true });
       if (!repId) return;
 
       const { notification, created } = await notificationService.upsert(repId, req.body || {});

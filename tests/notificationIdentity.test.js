@@ -85,3 +85,55 @@ describe('notification identity (IDOR)', () => {
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(B);
   });
 });
+
+describe('POST /upsert: explicit service path', () => {
+  const SERVICE = String(new mongoose.Types.ObjectId());
+  const upsertAs = async (req) => {
+    const res = mkRes();
+    notificationService.upsert = jest.fn().mockResolvedValue({ notification: { id: 1 }, created: true });
+    notificationService.serialize = (x) => x;
+    await controller.upsert({ query: {}, params: {}, authVerified: true, ...req }, res);
+    return res;
+  };
+  afterEach(() => { delete process.env.NOTIFICATION_SERVICE_USER_IDS; });
+
+  test('allow-listed service token may target a rep via body.repId or x-agent-id', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = ` ${SERVICE} , other `;
+    await upsertAs({ user: { userId: SERVICE }, headers: {}, body: { repId: B } });
+    expect(notificationService.upsert.mock.calls[0][0]).toBe(B);
+    await upsertAs({ user: { userId: SERVICE }, headers: { 'x-agent-id': A }, body: {} });
+    expect(notificationService.upsert.mock.calls[0][0]).toBe(A);
+  });
+
+  test('ordinary token cannot target another rep (list empty by default)', async () => {
+    const res = await upsertAs({ user: { userId: A }, headers: { 'x-agent-id': B }, body: { repId: B } });
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(notificationService.upsert).not.toHaveBeenCalled();
+  });
+
+  test('a token NOT in the list is refused even if the list is set', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
+    const res = await upsertAs({ user: { userId: A }, headers: {}, body: { repId: B } });
+    expect(notificationService.upsert.mock.calls[0][0]).toBe(A); // body.repId ignored
+    expect(res.status).not.toHaveBeenCalledWith(403);
+  });
+
+  test('service identity from the unverified header fallback gets no power', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
+    await upsertAs({ authVerified: false, user: { userId: SERVICE, id: SERVICE }, headers: { 'x-user-id': SERVICE }, body: { repId: B } });
+    expect(notificationService.upsert.mock.calls[0][0]).toBe(SERVICE);
+  });
+
+  test('invalid target id → 400', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
+    const res = await upsertAs({ user: { userId: SERVICE }, headers: {}, body: { repId: 'nope' } });
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  test('service path is NOT available on other notification routes', async () => {
+    process.env.NOTIFICATION_SERVICE_USER_IDS = SERVICE;
+    const res = mkRes();
+    await controller.list({ query: {}, body: {}, params: {}, authVerified: true, user: { userId: SERVICE }, headers: { 'x-agent-id': B } }, res);
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+});

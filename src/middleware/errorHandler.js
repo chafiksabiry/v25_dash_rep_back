@@ -7,8 +7,9 @@ function errorHandler(err, req, res, next) {
   // Send error response
   res.status(err.status || 500).json({
     message: err.message || 'Internal server error',
-    // Only include stack trace in development
-    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
+    // Stack traces only with an explicit debug switch (never inferred from NODE_ENV, which
+    // can be unset on a deployed environment).
+    ...(process.env.EXPOSE_ERROR_STACK === 'true' && { stack: err.stack })
   });
 }
 
