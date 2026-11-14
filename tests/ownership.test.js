@@ -100,3 +100,21 @@ describe('route wiring: ownership runs BEFORE the upload middleware', () => {
     expect(handlers[0]).toBe(requireProfileOwnership);
   });
 });
+
+describe('recheck routes wiring (PR #6)', () => {
+  test.each(['/:id/identity/recheck', '/:id/language/accent/recheck'])('%s starts with ownership', (path) => {
+    const router = require('../src/routes/profileRoutes');
+    const layer = router.stack.find((l) => l.route && l.route.path === path && l.route.methods.post);
+    expect(layer.route.stack[0].handle).toBe(requireProfileOwnership);
+  });
+});
+
+describe('language job polling wiring (PR #6)', () => {
+  test('GET /:id/language/analyze-video/jobs/:jobId starts with ownership', () => {
+    const router = require('../src/routes/profileRoutes');
+    const layer = router.stack.find(
+      (l) => l.route && l.route.path === '/:id/language/analyze-video/jobs/:jobId' && l.route.methods.get
+    );
+    expect(layer.route.stack[0].handle).toBe(requireProfileOwnership);
+  });
+});

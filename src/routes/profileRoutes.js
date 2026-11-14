@@ -59,10 +59,10 @@ router.get('/completion-status', profileController.getCompletionStatus.bind(prof
 router.get('/:id/plan', profileController.getPlan.bind(profileController));
 
 // Re-compare every experience video (including the first) to the current profile photo.
-router.post('/:id/identity/recheck', profileController.recheckIdentity.bind(profileController));
+router.post('/:id/identity/recheck', requireProfileOwnership, profileController.recheckIdentity.bind(profileController));
 
 // Hear the accent on experience videos that were scored from a transcript only.
-router.post('/:id/language/accent/recheck', profileController.recheckAccents.bind(profileController));
+router.post('/:id/language/accent/recheck', requireProfileOwnership, profileController.recheckAccents.bind(profileController));
 
 // Analyze experience video with AI (Whisper + GPT-4)
 router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
@@ -70,6 +70,7 @@ router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUploa
 // Poll async language video analysis job (must be registered before POST analyze-video)
 router.get(
   '/:id/language/analyze-video/jobs/:jobId',
+  requireProfileOwnership,
   profileController.getLanguageVideoJobStatus.bind(profileController)
 );
 
