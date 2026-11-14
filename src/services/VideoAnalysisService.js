@@ -151,9 +151,15 @@ const buildLanguageLookup = (items) => {
   return byLower;
 };
 
-const buildAnalysisPrompt = (contextStr, transcription, vocab) => `You are an expert career analyst and skills assessor (not limited to HR recruiting). ${contextStr}
+const RELEVANCE_EXPERIENCE = `- The speaker is supposed to describe the SPECIFIC professional experience given in the context above.
+- Judge from the TRANSCRIPT whether the speech is actually ABOUT that role/company and professional experience in general.`;
 
-Analyze the following video transcript from a professional experience description and extract structured, scored data.
+const RELEVANCE_PRESENTATION = `- The speaker is supposed to INTRODUCE THEMSELVES and present their personal and professional background (who they are, their career path, skills, sectors, languages, strengths).
+- Judge from the TRANSCRIPT whether the speech is actually a personal/professional self-presentation. There is NO specific role or company to match.`;
+
+const buildAnalysisPrompt = (contextStr, transcription, vocab, mode = 'experience') => `You are an expert career analyst and skills assessor (not limited to HR recruiting). ${contextStr}
+
+Analyze the following video transcript ${mode === 'presentation' ? 'of a personal and professional self-presentation' : 'from a professional experience description'} and extract structured, scored data.
 
 TRANSCRIPT:
 "${transcription || '[No speech detected — infer conservatively from the provided context only]'}"
@@ -176,8 +182,7 @@ SUMMARY — TRANSCRIPT ONLY (VERY IMPORTANT):
 - Stay inside the perimeter of THIS recording. No outside knowledge about the company or the person's career.
 
 RELEVANCE / OFF-TOPIC CHECK — VERY IMPORTANT:
-- The speaker is supposed to describe the SPECIFIC professional experience given in the context above.
-- Judge from the TRANSCRIPT whether the speech is actually ABOUT that role/company and professional experience in general.
+${mode === 'presentation' ? RELEVANCE_PRESENTATION : RELEVANCE_EXPERIENCE}
 - If the transcript is clearly unrelated (random talk, testing the mic, a totally different topic, jokes, silence, advertising, reading something off-topic, etc.), set "relevance.onTopic" to false and give a low "relevance.score". Otherwise set it to true.
 - IMPORTANT: This relevance flag is INFORMATIONAL only. ALWAYS extract every skill, industry and activity that is genuinely evidenced in the transcript, EVEN IF you judged the video off-topic. Do NOT return empty arrays just because relevance is low — only return empty when there is truly no matching evidence.
 
@@ -255,7 +260,7 @@ Scoring rules:
 - Score 100 = expert-level, strongly evidenced
 - Clear mention with detail → 70+
 - Vague mention → 30-60
-- relevance.score: 80-100 = clearly about the stated experience; 40-70 = loosely related; 0-30 = off-topic/unrelated.
+- relevance.score: 80-100 = clearly about ${mode === 'presentation' ? 'the person and their professional background' : 'the stated experience'}; 40-70 = loosely related; 0-30 = off-topic/unrelated.
 - Return pure JSON only, nothing else`;
 
 // Dedicated, fine-grained spoken-language assessment built from the transcript
@@ -540,6 +545,23 @@ class VideoAnalysisService {
     return publicId || null;
   }
 
+  /**
+   * Delete a video previously uploaded for analysis (best effort, never throws).
+   * Used so a candidate keeps a single Cloudinary copy of the presentation video.
+   */
+  async deleteUploadedVideo(url) {
+    try {
+      this._ensureInitialized();
+      const publicId = this.cloudinaryVideoPublicId(url);
+      if (!publicId) return false;
+      const res = await cloudinary.uploader.destroy(publicId, { resource_type: 'video', invalidate: true });
+      return res?.result === 'ok';
+    } catch (error) {
+      logger.warn(`Could not delete analysis video copy: ${error?.message}`);
+      return false;
+    }
+  }
+
   /** URL Cloudinary d'une image (frame) extraite de la vidéo à un offset donné. */
   buildFrameUrl(publicId, offsetSeconds) {
     return cloudinary.url(publicId, {
@@ -758,21 +780,30 @@ class VideoAnalysisService {
           .filter(Boolean);
     const description = String(experienceContext?.description || '').trim();
 
-    let contextStr = title
-      ? `The person is describing their experience as "${title}" at "${company || 'a company'}".`
-      : 'The person is describing their professional experience.';
+    const isPresentation = experienceContext?.mode === 'presentation';
 
-    if (responsibilities.length) {
-      contextStr += ` Optional profile notes (HINTS ONLY — do NOT extract skills/industries/activities/languages from these unless the transcript also evidences them): ${responsibilities
-        .slice(0, 12)
-        .map((r) => `"${r}"`)
-        .join('; ')}.`;
+    let contextStr;
+    if (isPresentation) {
+      contextStr =
+        'The person introduces themselves and presents their personal and professional background (their journey, skills, sectors, languages).' +
+        ' HARD RULE: analyze ONLY what is said in THIS recording transcript. Do not invent skills, sectors, activities or languages that were not spoken.';
+    } else {
+      contextStr = title
+        ? `The person is describing their experience as "${title}" at "${company || 'a company'}".`
+        : 'The person is describing their professional experience.';
+
+      if (responsibilities.length) {
+        contextStr += ` Optional profile notes (HINTS ONLY — do NOT extract skills/industries/activities/languages from these unless the transcript also evidences them): ${responsibilities
+          .slice(0, 12)
+          .map((r) => `"${r}"`)
+          .join('; ')}.`;
+      }
+      if (description) {
+        contextStr += ` Optional role notes (HINTS ONLY): "${description.slice(0, 500)}".`;
+      }
+      contextStr +=
+        ' HARD RULE: analyze ONLY what is said in THIS recording transcript. Do not invent domains, languages, or achievements from the title/company/notes. If purchasing, supply chain or communication were not spoken, do not claim them.';
     }
-    if (description) {
-      contextStr += ` Optional role notes (HINTS ONLY): "${description.slice(0, 500)}".`;
-    }
-    contextStr +=
-      ' HARD RULE: analyze ONLY what is said in THIS recording transcript. Do not invent domains, languages, or achievements from the title/company/notes. If purchasing, supply chain or communication were not spoken, do not claim them.';
 
     const response = await this.openai.chat.completions.create({
       model: 'gpt-4o',
@@ -784,7 +815,7 @@ class VideoAnalysisService {
         },
         {
           role: 'user',
-          content: buildAnalysisPrompt(contextStr, transcription, vocab),
+          content: buildAnalysisPrompt(contextStr, transcription, vocab, isPresentation ? 'presentation' : 'experience'),
         },
       ],
       temperature: 0.2,
@@ -1599,12 +1630,13 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
     const ext = mimetype.includes('mp4') ? 'mp4' : 'webm';
     const tmpPath = path.join(os.tmpdir(), `exp-video-${Date.now()}.${ext}`);
     let audioTmpPath = null;
+    let upload = null;
 
     try {
       fs.writeFileSync(tmpPath, videoBuffer);
 
       console.log(`Uploading video to Cloudinary (${Math.round(videoBuffer.length / 1024)}KB)...`);
-      const upload = await this.uploadToCloudinary(tmpPath);
+      upload = await this.uploadToCloudinary(tmpPath);
 
       // Garde-fou durée : une présentation crédible doit durer au moins 30s.
       if (typeof upload.duration === 'number' && upload.duration < MIN_DURATION_SECONDS) {
@@ -1638,7 +1670,7 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
       const hasMeaningfulSpeech = meaningfulSpeechWordCount(transcription) >= MIN_MEANINGFUL_WORDS;
       if (!hasMeaningfulSpeech) {
         console.log(
-          `No meaningful speech detected (transcript="${(transcription || '').slice(0, 80)}") — ` +
+          `No meaningful speech detected (transcript chars=${(transcription || '').length}) — ` +
             'skipping language detection/assessment.'
         );
       }
@@ -1794,6 +1826,13 @@ If you are not sure of the variety, use neutral and confidence "low", and say so
         },
         provider: 'openai',
       };
+    } catch (error) {
+      // Presentation analysis that fails after the upload must not leave an orphan
+      // Cloudinary copy (one copy per candidate).
+      if (experienceContext?.mode === 'presentation' && upload?.url) {
+        await this.deleteUploadedVideo(upload.url);
+      }
+      throw error;
     } finally {
       if (fs.existsSync(tmpPath)) {
         fs.unlinkSync(tmpPath);

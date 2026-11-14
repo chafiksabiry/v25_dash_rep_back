@@ -8,9 +8,13 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const requestLogger = require('./middleware/requestLogger');
 const errorHandler = require('./middleware/errorHandler');
 const logger = require('./utils/logger');
+const { getJwtSecret } = require('./utils/jwtSecret');
 
 // Load environment variables
 dotenv.config();
+
+// Refuse to start without a JWT secret (no hard-coded default).
+getJwtSecret();
 
 // Connect to MongoDB (shared HARX database — same one v25_repscreationwizard_backend
 // writes rep profiles to, via MONGODB_URI). This is also where the Agent model used

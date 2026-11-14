@@ -1,28 +1,166 @@
 const { WebSocketServer } = require('ws');
+const jwt = require('jsonwebtoken');
+const Agent = require('../models/Agent');
+const { getJwtSecret } = require('../utils/jwtSecret');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 
 /** @type {import('ws').WebSocketServer | null} */
 let wss = null;
 
+const AUTH_TIMEOUT_MS = 5000;
+// Simultaneous sockets that have not authenticated yet, all clients together.
+const MAX_ANONYMOUS_CONNECTIONS = 50;
+// ...and per client address, so a few sockets cannot exhaust the global cap for everyone.
+const MAX_ANONYMOUS_PER_IP = 5;
+// Messages are tiny ({type:'auth',token}); ws would otherwise accept 100 MiB per message.
+const MAX_PAYLOAD_BYTES = 16 * 1024;
+
+/**
+ * Client address for the per-IP cap, given the number of TRUSTED proxy hops in front of
+ * the server (env WS_TRUSTED_PROXY_HOPS, default 1):
+ *  - 0 hops: direct connection, X-Forwarded-For is client-controlled and ignored; the
+ *    socket address is used.
+ *  - N hops: the Nth entry from the right of X-Forwarded-For (each trusted proxy appends
+ *    the address it saw); entries further left are client-supplied and ignored.
+ * Falls back to the socket address when the header has fewer entries than hops.
+ */
+const clientIp = (req, trustedHops) => {
+  const socketAddress = req?.socket?.remoteAddress || 'unknown';
+  if (!trustedHops || trustedHops < 1) return socketAddress;
+  const entries = String(req?.headers?.['x-forwarded-for'] || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean);
+  return entries.length >= trustedHops ? entries[entries.length - trustedHops] : socketAddress;
+};
+
+const parseHops = (value) => {
+  const n = Number.parseInt(value, 10);
+  return Number.isInteger(n) && n >= 0 ? n : 1;
+};
+
+/** Browsers cannot set an Authorization header on a WebSocket, so the token is
+ *  sent in a first `{ type: "auth", token }` message (never in the URL, which gets logged).
+ *  Non-browser clients may send `Authorization: Bearer …` on the upgrade instead. */
+const tokenFromUpgrade = (req) => {
+  const header = req?.headers?.authorization;
+  return header && header.startsWith('Bearer ') ? header.split(' ')[1] : null;
+};
+
+/**
+ * Verify a JWT and derive the rep ids the socket may receive: the token's userId
+ * and the agent ids owned by that user (notifications may be keyed by either).
+ * Returns a Set of strings, or null when the token is invalid.
+ */
+async function authenticate(token) {
+  let payload;
+  try {
+    payload = jwt.verify(token, getJwtSecret());
+  } catch {
+    return null;
+  }
+  const userId = payload?.userId || payload?.id;
+  if (!userId) return null;
+
+  const repIds = new Set([String(userId)]);
+  try {
+    if (isObjectIdString(String(userId))) {
+      const agents = await Agent.find({ userId }, { _id: 1 }).lean();
+      agents.forEach((a) => repIds.add(String(a._id)));
+    }
+  } catch (error) {
+    logger.warn(`[Notification WS] could not load agents for identity: ${error.message}`);
+  }
+  return repIds;
+}
+
 /**
  * Attach a WebSocket server at `/notification-updates`.
- * Clients send `{ type: "subscribe", repId }` so broadcasts can be filtered.
+ * A client receives nothing until it is authenticated. Its rep ids come from the
+ * verified token ONLY: any repId sent by the client is ignored.
  */
-function setupNotificationWebSocket(server) {
+function setupNotificationWebSocket(server, options = {}) {
+  const authTimeoutMs = options.authTimeoutMs ?? AUTH_TIMEOUT_MS;
+  const maxAnonymous = options.maxAnonymous ?? MAX_ANONYMOUS_CONNECTIONS;
+  const maxAnonymousPerIp = options.maxAnonymousPerIp ?? MAX_ANONYMOUS_PER_IP;
+  const trustedHops = options.trustedProxyHops ?? parseHops(process.env.WS_TRUSTED_PROXY_HOPS ?? '1');
   wss = new WebSocketServer({
     server,
     path: '/notification-updates',
+    maxPayload: MAX_PAYLOAD_BYTES,
   });
 
-  wss.on('connection', (ws) => {
-    ws.repId = null;
+  const anonymousCount = (ip) => {
+    let n = 0;
+    wss.clients.forEach((c) => {
+      if (!c.repIds && (ip === undefined || c.clientIp === ip)) n += 1;
+    });
+    return n;
+  };
+
+  wss.on('connection', (ws, req) => {
+    ws.repIds = null; // null = not authenticated: never receives broadcasts
+
+    ws.clientIp = clientIp(req, trustedHops);
+
+    // Caps on simultaneous unauthenticated sockets (this one is already counted).
+    if (anonymousCount() > maxAnonymous || anonymousCount(ws.clientIp) > maxAnonymousPerIp) {
+      ws.close(1013, 'too many unauthenticated connections');
+      return;
+    }
+
+    // Without an 'error' listener a protocol error (e.g. oversized message) is thrown as an
+    // uncaught exception, which would take the whole server down. ws closes the socket itself.
+    ws.on('error', (error) => {
+      logger.warn(`[Notification WS] socket error: ${error.code || error.message}`);
+    });
+
+    const authenticateWith = async (token) => {
+      const repIds = token ? await authenticate(token) : null;
+      if (!repIds) {
+        try {
+          ws.send(JSON.stringify({ type: 'error', code: 'UNAUTHENTICATED' }));
+        } catch {
+          /* ignore */
+        }
+        ws.close(4401, 'unauthenticated');
+        return;
+      }
+      ws.repIds = repIds;
+      ws.primaryRepId = [...repIds][0]; // the token's userId (inserted first)
+      try {
+        ws.send(JSON.stringify({ type: 'authenticated' }));
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const timer = setTimeout(() => {
+      if (!ws.repIds) ws.close(4401, 'authentication timeout');
+    }, authTimeoutMs);
+
+    // Kept for client compatibility: existing clients wait for this message before
+    // sending anything. It carries no data and does not authenticate the socket.
+    try {
+      ws.send(JSON.stringify({ type: 'connected', message: 'Ready for notification updates' }));
+    } catch {
+      /* ignore */
+    }
+
+    const headerToken = tokenFromUpgrade(req);
+    if (headerToken) authenticateWith(headerToken);
 
     ws.on('message', (raw) => {
       try {
         const data = JSON.parse(String(raw || ''));
-        if (data?.type === 'subscribe' && data.repId) {
-          ws.repId = String(data.repId).trim();
-          ws.send(JSON.stringify({ type: 'subscribed', repId: ws.repId }));
+        if (data?.type === 'auth' && !ws.repIds) {
+          authenticateWith(typeof data.token === 'string' ? data.token : null);
+        }
+        // "subscribe": acknowledged only for an authenticated socket, and always with the
+        // identity derived from the token. A client-supplied repId is never used.
+        if (data?.type === 'subscribe' && ws.repIds) {
+          ws.send(JSON.stringify({ type: 'subscribed', repId: ws.primaryRepId }));
         }
       } catch {
         /* ignore malformed */
@@ -30,21 +168,17 @@ function setupNotificationWebSocket(server) {
     });
 
     ws.on('close', () => {
-      ws.repId = null;
+      clearTimeout(timer);
+      ws.repIds = null;
     });
-
-    try {
-      ws.send(JSON.stringify({ type: 'connected', message: 'Ready for notification updates' }));
-    } catch {
-      /* ignore */
-    }
   });
 
   logger.info('Notification WebSocket listening on /notification-updates');
 }
 
 /**
- * Push a newly created notification to subscribed clients for that rep.
+ * Push a notification ONLY to authenticated clients whose verified identity
+ * covers that rep. Unauthenticated / unsubscribed clients receive nothing.
  * @param {{ type?: string, repId: string, notification: object, created?: boolean }} data
  */
 function broadcastNotificationUpdate(data) {
@@ -65,9 +199,7 @@ function broadcastNotificationUpdate(data) {
 
   wss.clients.forEach((client) => {
     if (client.readyState !== 1) return;
-    // Deliver to subscribed clients for this rep, or to clients that have not
-    // subscribed yet (they filter by repId on the client side — same as enrollment WS).
-    if (!client.repId || client.repId === targetRepId) {
+    if (client.repIds && client.repIds.has(targetRepId)) {
       try {
         client.send(message);
       } catch {
@@ -77,7 +209,18 @@ function broadcastNotificationUpdate(data) {
   });
 }
 
+/** Test helper / graceful shutdown. */
+function closeNotificationWebSocket() {
+  if (wss) {
+    // ws.close() alone leaves open sockets (and the HTTP server) alive.
+    wss.clients.forEach((client) => client.terminate());
+    wss.close();
+    wss = null;
+  }
+}
+
 module.exports = {
   setupNotificationWebSocket,
   broadcastNotificationUpdate,
+  closeNotificationWebSocket,
 };

@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const ProfileController = require('../controllers/ProfileController');
 const { authenticateToken } = require('../middleware/auth');
-const jwt = require('jsonwebtoken');
+const { requireProfileOwnership } = require('../middleware/ownership');
 
 const videoUpload = multer({
   storage: multer.memoryStorage(),
@@ -16,18 +16,7 @@ const videoUpload = multer({
 const router = express.Router();
 const profileController = new ProfileController();
 
-// Test route to generate a JWT token (only for development)
-router.get('/generate-test-token/:userId', (req, res) => {
-  const userId = req.params.userId;
-  const token = jwt.sign(
-    { userId: userId }, 
-    process.env.JWT_SECRET || 'my_super_secret_key_12345'
-   /*  { expiresIn: '1h' } */
-  );
-  res.json({ token });
-});
-
-// All other routes require authentication
+// All routes require authentication
 router.use(authenticateToken);
 
 // Get profile
@@ -70,23 +59,45 @@ router.get('/completion-status', profileController.getCompletionStatus.bind(prof
 router.get('/:id/plan', profileController.getPlan.bind(profileController));
 
 // Re-compare every experience video (including the first) to the current profile photo.
-router.post('/:id/identity/recheck', profileController.recheckIdentity.bind(profileController));
+router.post('/:id/identity/recheck', requireProfileOwnership, profileController.recheckIdentity.bind(profileController));
 
 // Hear the accent on experience videos that were scored from a transcript only.
-router.post('/:id/language/accent/recheck', profileController.recheckAccents.bind(profileController));
+router.post('/:id/language/accent/recheck', requireProfileOwnership, profileController.recheckAccents.bind(profileController));
 
 // Analyze experience video with AI (Whisper + GPT-4)
-router.post('/:id/experience/analyze-video', videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
+router.post('/:id/experience/analyze-video', requireProfileOwnership, videoUpload.single('video'), profileController.analyzeExperienceVideo.bind(profileController));
+
+// Analyze the personal presentation video (no experience context): persists under
+// personalInfo.presentationVideo.* and merges detected skills/sectors/languages.
+router.post(
+  '/:id/presentation/analyze-video',
+  // Verified token + ownership BEFORE multer buffers up to 150 MB.
+  requireProfileOwnership,
+  (req, res, next) => {
+    videoUpload.single('video')(req, res, (err) => {
+      if (err) {
+        const code = err.code === 'LIMIT_FILE_SIZE' ? 'VIDEO_TOO_LARGE' : 'UPLOAD_FAILED';
+        const message =
+          err.code === 'LIMIT_FILE_SIZE' ? 'Video file is too large (max 150 MB).' : err.message || 'Video upload failed';
+        return res.status(400).json({ code, message });
+      }
+      next();
+    });
+  },
+  profileController.analyzePresentationVideo.bind(profileController)
+);
 
 // Poll async language video analysis job (must be registered before POST analyze-video)
 router.get(
   '/:id/language/analyze-video/jobs/:jobId',
+  requireProfileOwnership,
   profileController.getLanguageVideoJobStatus.bind(profileController)
 );
 
 // Analyze dedicated language verification video (Languages tab — not experience onboarding)
 router.post(
   '/:id/language/analyze-video',
+  requireProfileOwnership,
   (req, res, next) => {
     videoUpload.single('video')(req, res, (err) => {
       if (err) {

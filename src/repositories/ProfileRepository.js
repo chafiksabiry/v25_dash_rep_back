@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const Profile = require('../models/Profile');
 const Agent = require('../models/Agent');
 const logger = require('../utils/logger');
+const { isObjectIdString } = require('../utils/objectId');
 const {
   buildVideoAssessmentResults,
   rebuildProfileVideoInsights,
@@ -170,6 +171,114 @@ class ProfileRepository {
     }
 
     return false;
+  }
+
+  /**
+   * Resolve an agent from `:id`, which may be the agent _id OR the userId.
+   * Returns { _id, userId, presentationVideoUrl } or null.
+   */
+  async resolveAgentIdentity(profileId) {
+    if (!isObjectIdString(String(profileId))) return null;
+    const agent = await Agent.findOne(
+      { $or: [{ _id: profileId }, { userId: profileId }] },
+      { userId: 1, 'personalInfo.presentationVideo': 1 }
+    ).lean();
+    if (!agent) return null;
+    const pv = agent.personalInfo?.presentationVideo;
+    const presentationVideoUrl =
+      typeof pv === 'string' ? pv : pv && typeof pv === 'object' ? pv.url || null : null;
+    const presentationVideoPublicId =
+      pv && typeof pv === 'object' ? pv.publicId || null : null;
+    return { _id: agent._id, userId: agent.userId, presentationVideoUrl, presentationVideoPublicId };
+  }
+
+  /**
+   * Persist the presentation-video analysis under personalInfo.presentationVideo.*
+   * without ever touching wizard-owned fields (`url`, `publicId`, `duration`...):
+   * analysis fields are namespaced (analyzedVideoUrl, analyzedDuration, ...).
+   * Handles null/missing personalInfo or presentationVideo. Then merges the
+   * detected skills/sectors/activities/languages via applyVideoInsights.
+   * Returns { saved, insightsApplied }.
+   */
+  async savePresentationVideoAnalysis(profileId, payload) {
+    const filter = mongoose.isValidObjectId(profileId)
+      ? { _id: profileId }
+      : { userId: profileId };
+
+    const baseFields = {
+      analyzedVideoUrl: payload.videoUrl || null,
+      analyzedDuration: payload.duration || null,
+      // Wizard publicId when the analysis was requested: the analysis is stale once it changes.
+      analyzedForPublicId: payload.analyzedForPublicId || null,
+      transcription: payload.transcription || '',
+      analysis: this.sanitizeAnalysisForStorage(payload.analysis) || {},
+      languageAssessment: this.sanitizeLanguageAssessmentForStorage(payload.languageAssessment) || {},
+      fraudCheck: payload.fraudCheck || {},
+      relevance: payload.relevance || {},
+      analyzedAt: new Date(),
+    };
+
+    const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+    // The wizard owns personalInfo.presentationVideo and may write it between our
+    // read and our write. The update is therefore CONDITIONAL on the exact state we
+    // read (compare-and-set); on a miss we re-read and retry, never overwrite.
+    const MAX_ATTEMPTS = 3;
+    let matched = false;
+    // The wizard re-recorded while we were analyzing: written, but ignored by the merge.
+    let stale = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS && !matched; attempt += 1) {
+      const agent = await Agent.findOne(filter, { personalInfo: 1 }).lean();
+      if (!agent) return { saved: false, insightsApplied: false };
+
+      const info = agent.personalInfo;
+      const set = {};
+      const guard = {};
+      let currentPublicId = null;
+      const fields = { ...baseFields };
+      if (info === null || info === undefined) {
+        guard.personalInfo = null; // null or missing
+        set.personalInfo = { presentationVideo: fields };
+      } else if (!isObj(info)) {
+        return { saved: false, insightsApplied: false };
+      } else {
+        const pv = info.presentationVideo;
+        if (pv === null || pv === undefined) {
+          guard['personalInfo.presentationVideo'] = null;
+          set['personalInfo.presentationVideo'] = fields;
+        } else if (isObj(pv)) {
+          guard['personalInfo.presentationVideo'] = { $type: 'object' };
+          // Also pin the wizard publicId we judged staleness against (null matches absent).
+          guard['personalInfo.presentationVideo.publicId'] = pv.publicId ?? null; // raw value, as stored
+          currentPublicId = pv.publicId || null; // '' and absent both mean "no publicId"
+          Object.entries(fields).forEach(([k, v]) => {
+            set[`personalInfo.presentationVideo.${k}`] = v;
+          });
+        } else {
+          // Legacy bare string owned by the wizard: write next to it.
+          guard['personalInfo.presentationVideo'] = { $type: typeof pv === 'string' ? 'string' : 'undefined' };
+          set['personalInfo.presentationVideoAnalysis'] = fields;
+        }
+      }
+
+      // Judged against the exact state the guard pins. A stale analysis must not keep a
+      // reference to a video copy that the caller is about to delete.
+      const attemptStale = (payload.analyzedForPublicId || null) !== currentPublicId;
+      if (attemptStale) {
+        fields.analyzedVideoUrl = null; // whole-object writes share this object
+        if ('personalInfo.presentationVideo.analyzedVideoUrl' in set) {
+          set['personalInfo.presentationVideo.analyzedVideoUrl'] = null;
+        }
+      }
+
+      const res = await Agent.updateOne({ ...filter, ...guard }, { $set: set });
+      matched = res.matchedCount > 0;
+      if (matched) stale = attemptStale;
+    }
+    if (!matched) return { saved: false, insightsApplied: false, stale: false };
+
+    const insightsApplied = await this.applyVideoInsights(filter);
+    return { saved: true, insightsApplied, stale };
   }
 
   /**
