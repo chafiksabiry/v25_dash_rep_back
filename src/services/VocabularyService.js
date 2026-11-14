@@ -32,6 +32,8 @@ class VocabularyService {
         id: doc._id,
         name: doc.name,
         ...(doc.code ? { code: doc.code } : {}),
+        ...(doc.nativeName ? { nativeName: doc.nativeName } : {}),
+        ...(doc.name_i18n ? { name_i18n: doc.name_i18n } : {}),
       }));
   }
 
@@ -57,7 +59,7 @@ class VocabularyService {
         this._items(SoftSkill),
         this._items(Industry),
         this._items(Activity),
-        this._items(Language, { name: 1, code: 1 }),
+        this._items(Language, { name: 1, code: 1, nativeName: 1, name_i18n: 1 }),
       ]);
 
     this._cache = {

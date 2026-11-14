@@ -12,6 +12,41 @@ class ProfileRepository {
     return Profile.findOne({ userId });
   }
 
+  profileFilter(profileId) {
+    return mongoose.isValidObjectId(profileId) ? { _id: profileId } : { userId: profileId };
+  }
+
+  async listExperiences(profileId) {
+    const agent = await Agent.findOne(this.profileFilter(profileId), { experience: 1 }).lean();
+    return Array.isArray(agent?.experience) ? agent.experience : [];
+  }
+
+  /**
+   * Replace only the anti-fraud block of one experience, including index 0.
+   * Called when the profile photo changes so every existing video is compared
+   * to the new photo without re-running the full analysis.
+   */
+  async updateExperienceLanguageAssessment(profileId, experienceIndex, languageAssessment) {
+    const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    const res = await Agent.updateOne(this.profileFilter(profileId), {
+      $set: {
+        [`experience.${idx}.videoLanguageAssessment`]:
+          this.sanitizeLanguageAssessmentForStorage(languageAssessment) || {},
+      },
+    });
+    return res.matchedCount > 0;
+  }
+
+  async updateExperienceFraudCheck(profileId, experienceIndex, fraudCheck) {
+    const idx = Number.isInteger(experienceIndex) ? experienceIndex : parseInt(experienceIndex, 10);
+    if (!Number.isInteger(idx) || idx < 0) return false;
+    const res = await Agent.updateOne(this.profileFilter(profileId), {
+      $set: { [`experience.${idx}.videoFraudCheck`]: fraudCheck || {} },
+    });
+    return res.matchedCount > 0;
+  }
+
   /**
    * Fetch the agent's profile photo URL (used as the identity reference when
    * verifying that the person in the experience video matches the account).
@@ -252,6 +287,9 @@ class ProfileRepository {
           `tech=${set['skills.technical']?.length || 0}, ` +
           `prof=${set['skills.professional']?.length || 0}, ` +
           `soft=${set['skills.soft']?.length || 0}, ` +
+          `proposedTech=${set.proposedSkills?.technical?.length || 0}, ` +
+          `proposedProf=${set.proposedSkills?.professional?.length || 0}, ` +
+          `proposedSoft=${set.proposedSkills?.soft?.length || 0}, ` +
           `industries=${set['professionalSummary.industries']?.length || 0}, ` +
           `activities=${set['professionalSummary.activities']?.length || 0}`
       );
