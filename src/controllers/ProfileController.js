@@ -2,6 +2,7 @@ const ProfileService = require('../services/ProfileService');
 const VideoAnalysisService = require('../services/VideoAnalysisService');
 const LanguageVideoJobService = require('../services/LanguageVideoJobService');
 const ProfileRepository = require('../repositories/ProfileRepository');
+const { runPresentationAnalysis } = require('../services/PresentationAnalysisService');
 const logger = require('../utils/logger');
 
 class ProfileController {
@@ -699,6 +700,23 @@ class ProfileController {
       }
       logger.error(`Error in analyzeExperienceVideo controller: ${error.message}`, { error });
       res.status(500).json({ message: 'Video analysis failed', error: error.message });
+    }
+  }
+
+  async analyzePresentationVideo(req, res) {
+    try {
+      const { status, body } = await runPresentationAnalysis({
+        videoAnalysisService: this.videoAnalysisService,
+        profileRepository: this.profileRepository,
+        profileId: req.params.id,
+        requesterId: req.user?.userId || req.user?.id,
+        authVerified: req.authVerified === true,
+        file: req.file,
+      });
+      res.status(status).json(body);
+    } catch (error) {
+      logger.error(`Error in analyzePresentationVideo controller: ${error.message}`);
+      res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Presentation analysis failed' });
     }
   }
 
